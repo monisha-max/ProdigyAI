@@ -1,0 +1,7 @@
+google-adk==1.28.0
+toolbox-core
+fastapi
+uvicorn[standard]
+python-dotenv
+google-auth
+pg8000

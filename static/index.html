@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProdigyAI — Your AI Chief of Staff</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+    <!-- ═══ Splash Screen ═══ -->
+    <div class="splash" id="splash">
+        <div class="splash-content">
+            <div class="splash-orb">
+                <div class="orb-ring ring-1"></div>
+                <div class="orb-ring ring-2"></div>
+                <div class="orb-ring ring-3"></div>
+                <div class="orb-core"><span class="material-icons-round">psychology</span></div>
+            </div>
+            <h1 class="splash-title">ProdigyAI</h1>
+            <p class="splash-subtitle">Your AI Chief of Staff</p>
+            <div class="splash-loader"><div class="splash-progress"></div></div>
+            <p class="splash-status" id="splashStatus">Connecting to Cloud SQL...</p>
+        </div>
+        <div class="splash-particles" id="splashParticles"></div>
+    </div>
+
+    <!-- ═══ App Shell ═══ -->
+    <div class="app" id="app" style="opacity:0">
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <div class="logo-icon"><span class="material-icons-round">psychology</span></div>
+                    <div class="logo-text">
+                        <h1>ProdigyAI</h1>
+                        <span class="logo-subtitle">AI Chief of Staff</span>
+                    </div>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="command" onclick="switchView('command')">
+                    <span class="material-icons-round">rocket_launch</span><span>Command Center</span>
+                </a>
+                <a href="#" class="nav-item" data-view="tasks" onclick="switchView('tasks')">
+                    <span class="material-icons-round">task_alt</span><span>Tasks</span>
+                    <span class="nav-badge" id="taskBadge">0</span>
+                </a>
+                <a href="#" class="nav-item" data-view="calendar" onclick="switchView('calendar')">
+                    <span class="material-icons-round">calendar_month</span><span>Calendar</span>
+                </a>
+                <a href="#" class="nav-item" data-view="notes" onclick="switchView('notes')">
+                    <span class="material-icons-round">sticky_note_2</span><span>Notes</span>
+                </a>
+                <a href="#" class="nav-item" data-view="agents" onclick="switchView('agents')">
+                    <span class="material-icons-round">hub</span><span>Agent Network</span>
+                    <span class="nav-live-dot"></span>
+                </a>
+            </nav>
+            <!-- Mini Agent Status -->
+            <div class="sidebar-footer">
+                <div class="sidebar-agents">
+                    <div class="mini-agent" id="mini-coordinator" title="Coordinator"><span>C</span></div>
+                    <div class="mini-agent" id="mini-taskops" title="TaskOps"><span>T</span></div>
+                    <div class="mini-agent" id="mini-calendarops" title="CalendarOps"><span>E</span></div>
+                    <div class="mini-agent" id="mini-knowledge" title="KnowledgeBase"><span>K</span></div>
+                    <div class="mini-agent" id="mini-insights" title="Insights"><span>I</span></div>
+                </div>
+                <div class="agent-status">
+                    <div class="status-dot"></div>
+                    <span>5 Agents · 5 Tool Sources</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <button class="menu-toggle" onclick="toggleSidebar()"><span class="material-icons-round">menu</span></button>
+                <div class="topbar-title">
+                    <h2 id="viewTitle">Command Center</h2>
+                    <span class="topbar-date" id="currentDate"></span>
+                </div>
+                <!-- Notification Bell -->
+                <div class="notification-wrapper">
+                    <button class="btn-icon notification-btn" onclick="toggleNotifications()" id="notifBtn">
+                        <span class="material-icons-round">notifications</span>
+                        <span class="notif-dot" id="notifDot"></span>
+                    </button>
+                    <div class="notification-panel" id="notifPanel">
+                        <div class="notif-header"><h4>Smart Alerts</h4><span class="notif-badge" id="notifCount">0</span></div>
+                        <div class="notif-list" id="notifList"></div>
+                    </div>
+                </div>
+                <button class="btn-icon" onclick="refreshAll()" title="Refresh"><span class="material-icons-round">refresh</span></button>
+            </header>
+
+            <!-- ═══ COMMAND CENTER (Main View) ═══ -->
+            <div class="view active" id="view-command">
+
+                <!-- ═══ TIME MACHINE — What-If Simulator (appears on top when triggered) ═══ -->
+                <div class="time-machine" id="timeMachine" style="display:none">
+                    <div class="tm-header">
+                        <div class="tm-icon"><span class="material-icons-round">science</span></div>
+                        <div>
+                            <h3>Time Machine — What-If Simulator</h3>
+                            <span class="tm-subtitle" id="tmSubtitle">Simulating...</span>
+                        </div>
+                        <div class="tm-impact" id="tmImpact">
+                            <span class="material-icons-round">warning</span>
+                            <span id="tmImpactText">0 items affected</span>
+                        </div>
+                        <button class="btn-icon" onclick="closeTimeMachine()" title="Close"><span class="material-icons-round">close</span></button>
+                    </div>
+                    <div class="tm-split">
+                        <div class="tm-panel tm-before">
+                            <div class="tm-panel-label"><span class="material-icons-round">history</span> Current Schedule</div>
+                            <div class="tm-week" id="tmWeekBefore"></div>
+                        </div>
+                        <div class="tm-arrow"><span class="material-icons-round">arrow_forward</span></div>
+                        <div class="tm-panel tm-after">
+                            <div class="tm-panel-label"><span class="material-icons-round">update</span> After Day Off</div>
+                            <div class="tm-week" id="tmWeekAfter"></div>
+                        </div>
+                    </div>
+                    <div class="tm-moves" id="tmMoves"></div>
+                    <div class="tm-actions">
+                        <button class="cmd-btn primary" onclick="executeTimeMachinePlan()"><span class="material-icons-round">bolt</span> Execute Rescue Plan</button>
+                        <button class="cmd-btn secondary" onclick="closeTimeMachine()"><span class="material-icons-round">close</span> Cancel</button>
+                    </div>
+                </div>
+
+                <!-- AI COMMAND CARD — The hero. Proactive intelligence. -->
+                <div class="command-card" id="commandCard">
+                    <div class="command-card-header">
+                        <div class="command-icon">
+                            <span class="material-icons-round">auto_awesome</span>
+                        </div>
+                        <div class="command-title-area">
+                            <h3 id="commandGreeting">Analyzing your day...</h3>
+                            <span class="command-time" id="commandTime"></span>
+                        </div>
+                        <div class="command-badge" id="commandBadge">
+                            <span class="material-icons-round">trending_up</span>
+                            <span id="commandBadgeText">Optimizing</span>
+                        </div>
+                    </div>
+                    <div class="command-body" id="commandBody">
+                        <div class="command-loading">
+                            <div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>
+                            <span>Insights Agent is analyzing your tasks, events, and workload...</span>
+                        </div>
+                    </div>
+                    <div class="command-actions" id="commandActions" style="display:none">
+                        <button class="cmd-btn primary" onclick="executeCommandPlan()">
+                            <span class="material-icons-round">bolt</span> Accept & Execute
+                        </button>
+                        <button class="cmd-btn secondary" onclick="modifyCommandPlan()">
+                            <span class="material-icons-round">edit</span> Modify Plan
+                        </button>
+                        <button class="cmd-btn ghost" onclick="dismissCommand()">Dismiss</button>
+                    </div>
+                </div>
+
+                <!-- Stats Row -->
+                <div class="stats-row">
+                    <div class="stat-card" onclick="switchView('tasks')">
+                        <div class="stat-icon tasks-icon"><span class="material-icons-round">assignment</span></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statPending">-</span>
+                            <span class="stat-label">Pending</span>
+                        </div>
+                    </div>
+                    <div class="stat-card stat-alert" id="statOverdueCard">
+                        <div class="stat-icon urgent-icon"><span class="material-icons-round">warning</span></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statOverdue">-</span>
+                            <span class="stat-label">Overdue</span>
+                        </div>
+                    </div>
+                    <div class="stat-card" onclick="switchView('calendar')">
+                        <div class="stat-icon events-icon"><span class="material-icons-round">event</span></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statEventsToday">-</span>
+                            <span class="stat-label">Today's Events</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon done-icon"><span class="material-icons-round">emoji_events</span></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="statCompleted">-</span>
+                            <span class="stat-label">Completed</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Today's Battle Plan + Week Radar -->
+                <div class="battle-grid">
+                    <!-- Today's Timeline -->
+                    <div class="battle-plan">
+                        <div class="section-header">
+                            <h3><span class="material-icons-round">strategy</span> Today's Battle Plan</h3>
+                            <span class="section-subtitle">Tasks slotted into your free windows</span>
+                        </div>
+                        <div class="battle-timeline" id="battleTimeline">
+                            <div class="timeline-empty">Loading your optimized day...</div>
+                        </div>
+                    </div>
+
+                    <!-- Week Radar -->
+                    <div class="week-radar">
+                        <div class="section-header">
+                            <h3><span class="material-icons-round">radar</span> Week Radar</h3>
+                            <span class="section-subtitle">Workload heatmap for the next 7 days</span>
+                        </div>
+                        <div class="radar-days" id="radarDays"></div>
+                        <div class="radar-chart-wrap">
+                            <canvas id="workloadChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Kanban -->
+                <div class="kanban-section">
+                    <div class="section-header">
+                        <h3><span class="material-icons-round">view_kanban</span> Task Board</h3>
+                    </div>
+                    <div class="kanban-board">
+                        <div class="kanban-column">
+                            <div class="kanban-header todo-header"><span class="material-icons-round">radio_button_unchecked</span>To Do<span class="kanban-count" id="todoCount">0</span></div>
+                            <div class="kanban-cards" id="kanbanTodo"></div>
+                        </div>
+                        <div class="kanban-column">
+                            <div class="kanban-header progress-header"><span class="material-icons-round">timelapse</span>In Progress<span class="kanban-count" id="progressCount">0</span></div>
+                            <div class="kanban-cards" id="kanbanProgress"></div>
+                        </div>
+                        <div class="kanban-column">
+                            <div class="kanban-header done-header"><span class="material-icons-round">check_circle</span>Done<span class="kanban-count" id="doneCount">0</span></div>
+                            <div class="kanban-cards" id="kanbanDone"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ═══ Tasks View ═══ -->
+            <div class="view" id="view-tasks">
+                <div class="view-toolbar">
+                    <div class="filter-group">
+                        <button class="filter-btn active" onclick="filterTasks('all', this)">All</button>
+                        <button class="filter-btn" onclick="filterTasks('todo', this)">To Do</button>
+                        <button class="filter-btn" onclick="filterTasks('in_progress', this)">In Progress</button>
+                        <button class="filter-btn" onclick="filterTasks('done', this)">Done</button>
+                    </div>
+                </div>
+                <div class="task-list" id="taskListView"></div>
+            </div>
+
+            <!-- ═══ Calendar View ═══ -->
+            <div class="view" id="view-calendar">
+                <div class="calendar-header-bar">
+                    <button class="btn-icon" onclick="changeWeek(-1)"><span class="material-icons-round">chevron_left</span></button>
+                    <h3 id="calendarWeekLabel">This Week</h3>
+                    <button class="btn-icon" onclick="changeWeek(1)"><span class="material-icons-round">chevron_right</span></button>
+                </div>
+                <div class="calendar-grid" id="calendarGrid"></div>
+            </div>
+
+            <!-- ═══ Notes View ═══ -->
+            <div class="view" id="view-notes">
+                <div class="notes-grid" id="notesGrid"><div class="timeline-empty">Loading notes...</div></div>
+            </div>
+
+            <!-- ═══ Agent Network View ═══ -->
+            <div class="view" id="view-agents">
+                <div class="agent-network">
+                    <div class="network-header">
+                        <h3>Multi-Agent Orchestration Network</h3>
+                        <p>5 agents coordinating across 5 tool sources in real-time</p>
+                    </div>
+                    <div class="network-canvas" id="networkCanvas">
+                        <!-- Coordinator (center) -->
+                        <div class="agent-node coordinator-node" id="node-coordinator">
+                            <div class="node-pulse"></div>
+                            <div class="node-icon"><span class="material-icons-round">psychology</span></div>
+                            <div class="node-label">Coordinator</div>
+                            <div class="node-live-status" id="status-coordinator">Idle</div>
+                        </div>
+                        <!-- TaskOps (top) -->
+                        <div class="agent-node sub-node" id="node-taskops">
+                            <div class="node-pulse"></div>
+                            <div class="node-icon"><span class="material-icons-round">task_alt</span></div>
+                            <div class="node-label">TaskOps</div>
+                            <div class="node-tools">Cloud SQL (7 tools)</div>
+                            <div class="node-live-status" id="status-taskops">Standby</div>
+                        </div>
+                        <!-- CalendarOps (right) -->
+                        <div class="agent-node sub-node" id="node-calendarops">
+                            <div class="node-pulse"></div>
+                            <div class="node-icon"><span class="material-icons-round">calendar_month</span></div>
+                            <div class="node-label">CalendarOps</div>
+                            <div class="node-tools">SQL + Maps + Python (8 tools)</div>
+                            <div class="node-live-status" id="status-calendarops">Standby</div>
+                        </div>
+                        <!-- KnowledgeBase (bottom) -->
+                        <div class="agent-node sub-node" id="node-knowledge">
+                            <div class="node-pulse"></div>
+                            <div class="node-icon"><span class="material-icons-round">menu_book</span></div>
+                            <div class="node-label">KnowledgeBase</div>
+                            <div class="node-tools">SQL + Gemini (4 tools)</div>
+                            <div class="node-live-status" id="status-knowledge">Standby</div>
+                        </div>
+                        <!-- Insights (left) -->
+                        <div class="agent-node sub-node" id="node-insights">
+                            <div class="node-pulse"></div>
+                            <div class="node-icon"><span class="material-icons-round">insights</span></div>
+                            <div class="node-label">Insights</div>
+                            <div class="node-tools">SQL + BigQuery + Python (6 tools)</div>
+                            <div class="node-live-status" id="status-insights">Standby</div>
+                        </div>
+                        <!-- Connection lines -->
+                        <div class="network-line line-to-taskops" id="line-taskops"></div>
+                        <div class="network-line line-to-calendarops" id="line-calendarops"></div>
+                        <div class="network-line line-to-knowledge" id="line-knowledge"></div>
+                        <div class="network-line line-to-insights" id="line-insights"></div>
+                    </div>
+                    <!-- Live demo prompt -->
+                    <div class="network-demo-bar">
+                        <span class="material-icons-round">play_circle</span>
+                        <span>Try it live — send a message in the chat and watch the agents coordinate in real-time</span>
+                        <button class="cmd-btn primary" onclick="runDemoReplay()" style="margin-left:auto;padding:6px 14px;font-size:0.75rem">
+                            <span class="material-icons-round" style="font-size:14px">replay</span> Watch Demo
+                        </button>
+                    </div>
+                    <!-- Activity Feed -->
+                    <div class="agent-activity">
+                        <h4><span class="material-icons-round">terminal</span> Agent Activity Log</h4>
+                        <div class="activity-feed" id="activityFeed">
+                            <div class="activity-item">
+                                <span class="activity-time">--:--</span>
+                                <span class="activity-agent coordinator">Coordinator</span>
+                                <span class="activity-text">System initialized. All agents standing by.</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Tool Sources -->
+                    <div class="arch-cards">
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">storage</span></div><h4>MCP Toolbox</h4><p>17 SQL tools → Cloud SQL for tasks, events, notes, projects</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">map</span></div><h4>Google Maps</h4><p>Remote MCP — place search, directions, geocoding</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">search</span></div><h4>Google Search</h4><p>ADK grounding — real-time web research</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">code</span></div><h4>Python Tools</h4><p>Custom — scheduling logic, email drafts, reports</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">analytics</span></div><h4>BigQuery</h4><p>Remote MCP — historical productivity analytics</p></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- ═══ Chat Panel ═══ -->
+        <aside class="chat-panel" id="chatPanel">
+            <div class="chat-header">
+                <div class="chat-header-info">
+                    <div class="chat-avatar"><span class="material-icons-round">psychology</span></div>
+                    <div><h3>ProdigyAI</h3><span class="chat-status" id="chatStatus">Ready</span></div>
+                </div>
+                <button class="btn-icon" onclick="toggleChat()"><span class="material-icons-round">close</span></button>
+            </div>
+
+            <!-- Live Agent Pipeline -->
+            <div class="agent-stream" id="agentStream" style="display:none">
+                <div class="stream-header"><span class="material-icons-round">hub</span> Agent Pipeline</div>
+                <div class="stream-steps" id="streamSteps"></div>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot-message">
+                    <div class="message-avatar"><span class="material-icons-round">psychology</span></div>
+                    <div class="message-content">
+                        <p>I'm your AI Chief of Staff. I coordinate <strong>5 specialized agents</strong> across <strong>5 tool sources</strong> to manage your productivity.</p>
+                        <div class="tool-sources-mini">
+                            <span class="tool-chip sql"><span class="material-icons-round">storage</span>Cloud SQL</span>
+                            <span class="tool-chip maps"><span class="material-icons-round">map</span>Maps</span>
+                            <span class="tool-chip search"><span class="material-icons-round">search</span>Search</span>
+                            <span class="tool-chip python"><span class="material-icons-round">code</span>Python</span>
+                            <span class="tool-chip bq"><span class="material-icons-round">analytics</span>BigQuery</span>
+                        </div>
+                        <div class="quick-actions">
+                            <button class="quick-btn" onclick="sendQuick('Give me my daily briefing')"><span class="material-icons-round">wb_sunny</span>Briefing</button>
+                            <button class="quick-btn" onclick="sendQuick('Prepare for the investor pitch next Thursday')"><span class="material-icons-round">rocket_launch</span>Prep Meeting</button>
+                            <button class="quick-btn" onclick="sendQuick('What if I take Friday off?')"><span class="material-icons-round">flight</span>What-If</button>
+                            <button class="quick-btn" onclick="sendQuick('Schedule a team lunch somewhere nice near downtown')"><span class="material-icons-round">restaurant</span>Find Venue</button>
+                            <button class="quick-btn" onclick="sendQuick('Research the latest trends in AI agents and save notes')"><span class="material-icons-round">travel_explore</span>Research</button>
+                            <button class="quick-btn" onclick="sendQuick('Generate my weekly productivity report')"><span class="material-icons-round">assessment</span>Report</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="chat-input-wrapper">
+                    <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice input">
+                        <span class="material-icons-round" id="voiceIcon">mic</span>
+                    </button>
+                    <textarea id="chatInput" placeholder="Ask ProdigyAI anything..." rows="1" onkeydown="handleKey(event)"></textarea>
+                    <button class="send-btn" onclick="sendMessage()" id="sendBtn"><span class="material-icons-round">send</span></button>
+                </div>
+                <div class="voice-status" id="voiceStatus" style="display:none">
+                    <div class="voice-wave"><span></span><span></span><span></span><span></span><span></span></div>
+                    <span class="voice-text">Listening...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Chat FAB -->
+        <button class="chat-fab" id="chatFab" onclick="toggleChat()">
+            <span class="material-icons-round">chat</span>
+            <span class="fab-pulse"></span>
+        </button>
+    </div>
+
+    <!-- Confetti -->
+    <canvas id="confettiCanvas" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999"></canvas>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

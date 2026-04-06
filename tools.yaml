@@ -1,0 +1,371 @@
+sources:
+  prodigy-db:
+    kind: postgres
+    host: 127.0.0.1
+    port: 5432
+    database: prodigyai
+    user: apple
+    password: prodigyai123
+
+tools:
+  # ─── Task Tools (TaskOps Agent) ───
+  create_task:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Create a new task with title, description, priority, due date, and project name.
+    statement: |
+      INSERT INTO tasks (title, description, priority, due_date, project)
+      VALUES ($1, $2, $3, $4::date, $5)
+      RETURNING id, title, priority, due_date, status, project;
+    parameters:
+      - name: title
+        type: string
+        description: The task title
+      - name: description
+        type: string
+        description: Detailed task description
+      - name: priority
+        type: string
+        description: "Priority level: low, medium, high, or urgent"
+      - name: due_date
+        type: string
+        description: "Due date in YYYY-MM-DD format"
+      - name: project
+        type: string
+        description: Project this task belongs to
+
+  list_tasks:
+    kind: postgres-sql
+    source: prodigy-db
+    description: List all tasks. Optionally filter by status (todo, in_progress, done). Pass 'all' or leave empty to see all tasks.
+    statement: |
+      SELECT id, title, priority, due_date, status, project, created_at
+      FROM tasks
+      WHERE ($1 = 'all' OR status = $1)
+      ORDER BY
+        CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 END,
+        due_date ASC NULLS LAST;
+    parameters:
+      - name: status
+        type: string
+        description: "Filter by status: todo, in_progress, done, or all"
+
+  update_task:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Update a task's status by its ID.
+    statement: |
+      UPDATE tasks SET status = $2 WHERE id = $1
+      RETURNING id, title, priority, due_date, status, project;
+    parameters:
+      - name: id
+        type: integer
+        description: The task ID to update
+      - name: new_status
+        type: string
+        description: "New status: todo, in_progress, or done"
+
+  update_task_priority:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Update a task's priority by its ID.
+    statement: |
+      UPDATE tasks SET priority = $2 WHERE id = $1
+      RETURNING id, title, priority, due_date, status, project;
+    parameters:
+      - name: id
+        type: integer
+        description: The task ID to update
+      - name: new_priority
+        type: string
+        description: "New priority: low, medium, high, or urgent"
+
+  delete_task:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Delete a task by its ID.
+    statement: |
+      DELETE FROM tasks WHERE id = $1 RETURNING id, title;
+    parameters:
+      - name: id
+        type: integer
+        description: The task ID to delete
+
+  tasks_by_priority:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Get all tasks of a specific priority level, sorted by due date.
+    statement: |
+      SELECT id, title, description, priority, due_date, status, project
+      FROM tasks
+      WHERE priority = $1 AND status != 'done'
+      ORDER BY due_date ASC NULLS LAST;
+    parameters:
+      - name: priority
+        type: string
+        description: "Priority level to filter: low, medium, high, or urgent"
+
+  overdue_tasks:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Find all tasks that are past their due date and not yet completed.
+    statement: |
+      SELECT id, title, priority, due_date, status, project
+      FROM tasks
+      WHERE due_date < CURRENT_DATE AND status != 'done'
+      ORDER BY due_date ASC;
+
+  # ─── Calendar Tools (CalendarOps Agent) ───
+  create_event:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Create a new calendar event with title, date, start time, end time, attendees, location, and related project.
+    statement: |
+      INSERT INTO events (title, event_date, start_time, end_time, attendees, location, related_project)
+      VALUES ($1, $2::date, $3::time, $4::time, $5, $6, $7)
+      RETURNING id, title, event_date, start_time, end_time, attendees, location;
+    parameters:
+      - name: title
+        type: string
+        description: Event title
+      - name: event_date
+        type: string
+        description: "Event date in YYYY-MM-DD format"
+      - name: start_time
+        type: string
+        description: "Start time in HH:MM format (24h)"
+      - name: end_time
+        type: string
+        description: "End time in HH:MM format (24h)"
+      - name: attendees
+        type: string
+        description: Comma-separated list of attendee names
+      - name: location
+        type: string
+        description: Event location or meeting link
+      - name: related_project
+        type: string
+        description: Associated project name
+
+  list_events:
+    kind: postgres-sql
+    source: prodigy-db
+    description: List all events for a specific date.
+    statement: |
+      SELECT id, title, event_date, start_time, end_time, attendees, location, related_project
+      FROM events
+      WHERE event_date = $1::date
+      ORDER BY start_time ASC;
+    parameters:
+      - name: date
+        type: string
+        description: "Date to list events for in YYYY-MM-DD format"
+
+  upcoming_events:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Show all events scheduled for the next 7 days from today.
+    statement: |
+      SELECT id, title, event_date, start_time, end_time, attendees, location, related_project
+      FROM events
+      WHERE event_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
+      ORDER BY event_date ASC, start_time ASC;
+
+  check_conflicts:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Check for scheduling conflicts on a given date and time range.
+    statement: |
+      SELECT id, title, event_date, start_time, end_time, attendees, location
+      FROM events
+      WHERE event_date = $1::date
+        AND start_time < $3::time
+        AND end_time > $2::time
+      ORDER BY start_time ASC;
+    parameters:
+      - name: date
+        type: string
+        description: "Date to check in YYYY-MM-DD format"
+      - name: start_time
+        type: string
+        description: "Proposed start time in HH:MM format"
+      - name: end_time
+        type: string
+        description: "Proposed end time in HH:MM format"
+
+  # ─── Notes Tools (KnowledgeBase Agent) ───
+  create_note:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Create a new note with title, content, and tags.
+    statement: |
+      INSERT INTO notes (title, content, tags)
+      VALUES ($1, $2, $3)
+      RETURNING id, title, tags, created_at;
+    parameters:
+      - name: title
+        type: string
+        description: Note title
+      - name: content
+        type: string
+        description: Note content body
+      - name: tags
+        type: string
+        description: Comma-separated tags for categorization
+
+  create_note_linked:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Create a note linked to a specific task or event by their IDs.
+    statement: |
+      INSERT INTO notes (title, content, tags, related_task_id, related_event_id)
+      VALUES ($1, $2, $3, NULLIF($4, 0), NULLIF($5, 0))
+      RETURNING id, title, tags, related_task_id, related_event_id, created_at;
+    parameters:
+      - name: title
+        type: string
+        description: Note title
+      - name: content
+        type: string
+        description: Note content body
+      - name: tags
+        type: string
+        description: Comma-separated tags
+      - name: related_task_id
+        type: integer
+        description: "ID of related task (0 for none)"
+      - name: related_event_id
+        type: integer
+        description: "ID of related event (0 for none)"
+
+  search_notes:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Search notes by keyword in title or content.
+    statement: |
+      SELECT id, title, content, tags, related_task_id, related_event_id, created_at
+      FROM notes
+      WHERE title ILIKE '%' || $1 || '%'
+         OR content ILIKE '%' || $1 || '%'
+      ORDER BY created_at DESC;
+    parameters:
+      - name: keyword
+        type: string
+        description: Search keyword
+
+  list_notes:
+    kind: postgres-sql
+    source: prodigy-db
+    description: List all notes, optionally filtered by tag.
+    statement: |
+      SELECT id, title, content, tags, related_task_id, related_event_id, created_at
+      FROM notes
+      WHERE ($1 = 'all' OR tags ILIKE '%' || $1 || '%')
+      ORDER BY created_at DESC;
+    parameters:
+      - name: tag
+        type: string
+        description: "Tag to filter by, or 'all' to see everything"
+
+  # ─── Insights Tools (Insights Agent) ───
+  daily_briefing:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Generate today's briefing with tasks due today, overdue tasks, today's events, and summary counts.
+    statement: |
+      SELECT 'tasks_due_today' AS section, json_agg(json_build_object('id', id, 'title', title, 'priority', priority, 'project', project)) AS data
+      FROM tasks WHERE due_date = CURRENT_DATE AND status != 'done'
+      UNION ALL
+      SELECT 'overdue_tasks', json_agg(json_build_object('id', id, 'title', title, 'priority', priority, 'due_date', due_date, 'project', project))
+      FROM tasks WHERE due_date < CURRENT_DATE AND status != 'done'
+      UNION ALL
+      SELECT 'todays_events', json_agg(json_build_object('id', id, 'title', title, 'start_time', start_time, 'end_time', end_time, 'attendees', attendees, 'location', location))
+      FROM events WHERE event_date = CURRENT_DATE
+      UNION ALL
+      SELECT 'summary', json_build_object(
+        'total_pending', (SELECT COUNT(*) FROM tasks WHERE status != 'done'),
+        'total_overdue', (SELECT COUNT(*) FROM tasks WHERE due_date < CURRENT_DATE AND status != 'done'),
+        'events_today', (SELECT COUNT(*) FROM events WHERE event_date = CURRENT_DATE),
+        'events_this_week', (SELECT COUNT(*) FROM events WHERE event_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days')
+      )::json;
+
+  weekly_report:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Generate a weekly productivity report with tasks completed, events this week, notes created, and overdue count.
+    statement: |
+      SELECT
+        'completed_tasks' AS metric, COUNT(*)::text AS value
+      FROM tasks WHERE status = 'done' AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+      UNION ALL
+      SELECT 'pending_tasks', COUNT(*)::text FROM tasks WHERE status != 'done'
+      UNION ALL
+      SELECT 'events_this_week', COUNT(*)::text FROM events WHERE event_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
+      UNION ALL
+      SELECT 'notes_created', COUNT(*)::text FROM notes WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+      UNION ALL
+      SELECT 'overdue_count', COUNT(*)::text FROM tasks WHERE due_date < CURRENT_DATE AND status != 'done'
+      UNION ALL
+      SELECT 'projects_active', COUNT(*)::text FROM projects WHERE status = 'active';
+
+  workload_analysis:
+    kind: postgres-sql
+    source: prodigy-db
+    description: Analyze workload distribution showing tasks and events grouped by day for the next 7 days.
+    statement: |
+      SELECT
+        d.day::date AS date,
+        COALESCE(t.task_count, 0) AS tasks_due,
+        COALESCE(e.event_count, 0) AS events_scheduled,
+        COALESCE(t.task_count, 0) + COALESCE(e.event_count, 0) AS total_load
+      FROM generate_series(CURRENT_DATE, CURRENT_DATE + INTERVAL '6 days', '1 day') AS d(day)
+      LEFT JOIN (
+        SELECT due_date, COUNT(*) AS task_count FROM tasks WHERE status != 'done' GROUP BY due_date
+      ) t ON t.due_date = d.day::date
+      LEFT JOIN (
+        SELECT event_date, COUNT(*) AS event_count FROM events GROUP BY event_date
+      ) e ON e.event_date = d.day::date
+      ORDER BY d.day;
+
+  simulate_day_off:
+    kind: postgres-sql
+    source: prodigy-db
+    description: "What-if simulation: show all tasks and events that would be impacted if a specific day is taken off."
+    statement: |
+      SELECT 'task' AS type, id, title, priority AS detail, due_date::text AS date_info
+      FROM tasks
+      WHERE due_date = $1::date AND status != 'done'
+      UNION ALL
+      SELECT 'event', id, title, attendees, event_date::text
+      FROM events
+      WHERE event_date = $1::date
+      ORDER BY type, date_info;
+    parameters:
+      - name: date
+        type: string
+        description: "The date to simulate taking off in YYYY-MM-DD format"
+
+toolsets:
+  task_tools:
+    - create_task
+    - list_tasks
+    - update_task
+    - update_task_priority
+    - delete_task
+    - tasks_by_priority
+    - overdue_tasks
+  calendar_tools:
+    - create_event
+    - list_events
+    - upcoming_events
+    - check_conflicts
+  notes_tools:
+    - create_note
+    - create_note_linked
+    - search_notes
+    - list_notes
+  insights_tools:
+    - daily_briefing
+    - weekly_report
+    - workload_analysis
+    - simulate_day_off

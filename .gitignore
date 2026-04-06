@@ -1,0 +1,11 @@
+.env
+prodigy_ai/.env
+.venv/
+__pycache__/
+*.pyc
+toolbox
+test_reliability.py
+test_reliability_5.py
+test_demos.py
+*.bak
+.DS_Store
