@@ -142,6 +142,33 @@ def _ensure_google_tables():
         )
         cursor.execute(
             """
+            CREATE TABLE IF NOT EXISTS google_drive_cache (
+                file_id VARCHAR(500) PRIMARY KEY,
+                name VARCHAR(500) NOT NULL,
+                mime_type VARCHAR(255),
+                web_view_link TEXT,
+                modified_time TIMESTAMP,
+                owner VARCHAR(255),
+                size VARCHAR(50),
+                source VARCHAR(30) DEFAULT 'google',
+                last_synced_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS google_docs_cache (
+                doc_id VARCHAR(500) PRIMARY KEY,
+                title VARCHAR(500) NOT NULL,
+                web_view_link TEXT,
+                modified_time TIMESTAMP,
+                source VARCHAR(30) DEFAULT 'google',
+                last_synced_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS google_sync_state (
                 sync_key VARCHAR(50) PRIMARY KEY,
                 status VARCHAR(30) DEFAULT 'idle',
@@ -528,6 +555,164 @@ def mark_google_task_complete(task_id):
             [task_id],
         )
     )
+
+
+def cache_google_drive_files(files):
+    _ensure_google_tables()
+    if not files:
+        return
+    rows = [
+        [
+            f.get("id"),
+            f.get("name"),
+            f.get("mime_type"),
+            f.get("web_view_link"),
+            f.get("modified_time"),
+            f.get("owner"),
+            f.get("size"),
+            f.get("source", "google"),
+        ]
+        for f in files
+        if f.get("id") and f.get("name")
+    ]
+    _upsert_many(
+        """
+        INSERT INTO google_drive_cache (
+            file_id, name, mime_type, web_view_link, modified_time, owner, size, source, last_synced_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (file_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            mime_type = EXCLUDED.mime_type,
+            web_view_link = EXCLUDED.web_view_link,
+            modified_time = EXCLUDED.modified_time,
+            owner = EXCLUDED.owner,
+            size = EXCLUDED.size,
+            source = EXCLUDED.source,
+            last_synced_at = NOW()
+        """,
+        rows,
+    )
+
+
+def get_google_drive_files(limit: int = 20):
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            file_id AS id,
+            name,
+            mime_type,
+            web_view_link,
+            modified_time,
+            owner,
+            size,
+            source,
+            last_synced_at
+        FROM google_drive_cache
+        ORDER BY modified_time DESC NULLS LAST, name ASC
+        LIMIT %s
+        """,
+        [limit],
+    )
+    return _serialize(rows)
+
+
+def search_google_drive_files_cache(query: str):
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            file_id AS id,
+            name,
+            mime_type,
+            web_view_link,
+            modified_time,
+            owner,
+            size,
+            source,
+            last_synced_at
+        FROM google_drive_cache
+        WHERE name ILIKE %s
+        ORDER BY modified_time DESC NULLS LAST
+        LIMIT 20
+        """,
+        [f"%{query}%"],
+    )
+    return _serialize(rows)
+
+
+def cache_google_docs(docs):
+    _ensure_google_tables()
+    if not docs:
+        return
+    rows = [
+        [
+            d.get("id"),
+            d.get("title") or d.get("name"),
+            d.get("web_view_link"),
+            d.get("modified_time"),
+            d.get("source", "google"),
+        ]
+        for d in docs
+        if d.get("id") and (d.get("title") or d.get("name"))
+    ]
+    _upsert_many(
+        """
+        INSERT INTO google_docs_cache (
+            doc_id, title, web_view_link, modified_time, source, last_synced_at
+        )
+        VALUES (%s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (doc_id) DO UPDATE SET
+            title = EXCLUDED.title,
+            web_view_link = EXCLUDED.web_view_link,
+            modified_time = EXCLUDED.modified_time,
+            source = EXCLUDED.source,
+            last_synced_at = NOW()
+        """,
+        rows,
+    )
+
+
+def get_google_docs(limit: int = 20):
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            doc_id AS id,
+            title,
+            web_view_link,
+            modified_time,
+            source,
+            last_synced_at
+        FROM google_docs_cache
+        ORDER BY modified_time DESC NULLS LAST, title ASC
+        LIMIT %s
+        """,
+        [limit],
+    )
+    return _serialize(rows)
+
+
+def search_google_docs_cache(query: str):
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            doc_id AS id,
+            title,
+            web_view_link,
+            modified_time,
+            source,
+            last_synced_at
+        FROM google_docs_cache
+        WHERE title ILIKE %s
+        ORDER BY modified_time DESC NULLS LAST
+        LIMIT 20
+        """,
+        [f"%{query}%"],
+    )
+    return _serialize(rows)
 
 
 def get_gmail_summary():

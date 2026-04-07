@@ -21,6 +21,8 @@ from .tools.custom_tools import (
 )
 from .tools.google_workspace_tools import (
     get_workspace_calendar_tools,
+    get_workspace_docs_tools,
+    get_workspace_drive_tools,
     get_workspace_gmail_tools,
     get_workspace_task_tools,
 )
@@ -68,6 +70,8 @@ insights_tools = _safe_tool_load(get_insights_tools, "Insights tools")
 workspace_calendar_tools = get_workspace_calendar_tools()
 workspace_task_tools = get_workspace_task_tools()
 workspace_gmail_tools = get_workspace_gmail_tools()
+workspace_drive_tools = get_workspace_drive_tools()
+workspace_docs_tools = get_workspace_docs_tools()
 
 search_places_tool = FunctionTool(func=search_places)
 get_directions_tool = FunctionTool(func=get_directions)
@@ -87,6 +91,8 @@ ALL_TOOLS = [
     *workspace_calendar_tools,
     *workspace_task_tools,
     *workspace_gmail_tools,
+    *workspace_drive_tools,
+    *workspace_docs_tools,
     search_places_tool,
     get_directions_tool,
     free_slots_tool,
@@ -116,13 +122,16 @@ calendar_agent = LlmAgent(
     description="Scheduling specialist with Google Calendar, location intelligence, and conflict handling.",
     instruction=DATE_CONTEXT
     + """You are CalendarOps, the scheduling specialist.
-You have tools for: create_event, list_events, upcoming_events, check_conflicts, list_calendar_events_today, create_calendar_event, search_places, get_directions, calculate_free_slots, smart_reschedule.
+You have tools for: create_event, list_events, upcoming_events, check_conflicts, list_calendar_events_today, safe_list_google_calendar_events, create_calendar_event, search_places, get_directions, calculate_free_slots, smart_reschedule.
 
 Workflow for creating events:
 1. Check conflicts first with check_conflicts when using the internal planner
 2. Prefer create_calendar_event for user-facing scheduling on Google Calendar
 3. If there are conflicts, find free slots with calculate_free_slots
 4. Use sensible defaults: 1 hour duration, 10:00 start, location TBD
+For user questions about "my meetings", "my calendar", "today", "tomorrow", or date ranges, prefer Google calendar tools first:
+- use safe_list_google_calendar_events for ranges and relative dates
+- use list_calendar_events_today only for strictly-today asks
 NEVER ask the user for details; use defaults.""",
     tools=[*calendar_tools, *workspace_calendar_tools, search_places_tool, get_directions_tool, free_slots_tool, reschedule_tool],
 )
@@ -130,14 +139,18 @@ NEVER ask the user for details; use defaults.""",
 knowledge_agent = LlmAgent(
     model="gemini-2.5-flash",
     name="knowledge_base",
-    description="Knowledge specialist. Generates research summaries and saves them as notes.",
+    description="Knowledge specialist. Searches Google Drive and Google Docs, generates research summaries, and saves notes.",
     instruction=DATE_CONTEXT
     + """You are KnowledgeBase, the knowledge specialist.
-You have tools for: create_note, create_note_linked, search_notes, list_notes.
+You have tools for: create_note, create_note_linked, search_notes, list_notes, safe_search_drive_files, safe_list_drive_files, safe_get_drive_file_metadata, safe_search_google_docs, safe_list_google_docs, safe_get_google_doc_content.
 
-For research requests: use your training knowledge to generate actionable summaries, then save them as notes.
-Always suggest relevant tags. Be specific, not generic.""",
-    tools=notes_tools,
+For research requests: first search Drive and Docs for existing related files (safe_search_drive_files + safe_search_google_docs), then use your training knowledge to generate actionable summaries, then save them as notes.
+For "find files" or "search Drive" requests: use safe_search_drive_files with the user's query.
+For "recent files" or "show my Drive" requests: use safe_list_drive_files.
+For "search docs" or "find documents" requests: use safe_search_google_docs.
+For "read/summarize this doc" requests: use safe_get_google_doc_content with the document ID.
+Always suggest relevant tags when saving notes. Be specific, not generic.""",
+    tools=[*notes_tools, *workspace_drive_tools, *workspace_docs_tools],
 )
 
 insights_agent = LlmAgent(
@@ -200,12 +213,12 @@ Prefer Google Tasks for personal follow-up.""",
 prep_research_worker = LlmAgent(
     model="gemini-2.5-flash",
     name="prep_research",
-    description="Creates research notes for the workflow.",
+    description="Creates research notes for the workflow, optionally linking relevant Drive files.",
     instruction=DATE_CONTEXT
     + """You are part of a parallel preparation workflow.
-Your job: generate a research summary about the topic using your knowledge, then save it as a note.
-Use create_note with relevant tags. Be specific and actionable.""",
-    tools=notes_tools,
+Your job: search Drive and Google Docs for related files (safe_search_drive_files + safe_search_google_docs), then generate a research summary using your knowledge and save it as a note.
+Use create_note with relevant tags. If files are found, mention their names in the note content. Be specific and actionable.""",
+    tools=[*notes_tools, *workspace_drive_tools, *workspace_docs_tools],
 )
 
 prepare_workflow = ParallelAgent(
@@ -219,7 +232,7 @@ root_agent = LlmAgent(
     name="coordinator",
     description="ProdigyAI Coordinator, an AI Chief of Staff with direct access to local and Google Workspace tools.",
     instruction=DATE_CONTEXT
-    + """You are ProdigyAI, an AI Chief of Staff. You manage tasks, schedules, notes, inbox workflows, and strategic intelligence.
+    + """You are ProdigyAI, an AI Chief of Staff. You manage tasks, schedules, notes, inbox workflows, Drive files, and strategic intelligence.
 
 ## CRITICAL RULE
 NEVER ask the user for more details. ALWAYS use sensible defaults and act immediately. If information is missing, fill in reasonable defaults and proceed.
@@ -232,7 +245,7 @@ NEVER ask the user for more details. ALWAYS use sensible defaults and act immedi
 
 ### Calendar & Scheduling
 - create_event / list_events / upcoming_events / check_conflicts
-- list_calendar_events_today / create_calendar_event
+- list_calendar_events_today / safe_list_google_calendar_events / create_calendar_event
 - search_places / get_directions / calculate_free_slots / smart_reschedule
 
 ### Gmail & Inbox
@@ -240,6 +253,12 @@ NEVER ask the user for more details. ALWAYS use sensible defaults and act immedi
 
 ### Notes & Knowledge
 - create_note / create_note_linked / search_notes / list_notes
+
+### Google Drive
+- safe_search_drive_files / safe_list_drive_files / safe_get_drive_file_metadata
+
+### Google Docs
+- safe_search_google_docs / safe_list_google_docs / safe_get_google_doc_content
 
 ### Analytics & Intelligence
 - daily_briefing / weekly_report / workload_analysis / simulate_day_off / generate_report_summary / send_email_draft
@@ -252,6 +271,9 @@ Use tools directly for simple asks like:
 - "draft a reply"
 - "create a task"
 - "create an event"
+
+For "my calendar / my meetings" queries, prefer Google calendar tools over local SQL calendar tools.
+"Tomorrow" and date-range queries should use safe_list_google_calendar_events.
 
 ## DELEGATION
 Delegate when the request spans multiple products or multiple tool calls:

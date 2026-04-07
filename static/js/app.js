@@ -13,7 +13,11 @@ let cachedEvents = [];
 let cachedGoogleTasks = [];
 let cachedGoogleEvents = [];
 let cachedGmailThreads = [];
+let cachedDriveFiles = [];
+let cachedDocsFiles = [];
 let notifications = [];
+let drivesSectionOpen = true;
+let docsSectionOpen = true;
 let googleWorkspaceStatus = { connected: false, state: 'disconnected', message: 'Not synced yet.' };
 const BROWSER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local';
 
@@ -69,12 +73,13 @@ function initSplash() {
     const statuses = [
         'Connecting to Cloud SQL via MCP Toolbox...',
         'Connecting to Google Workspace MCP...',
+        'Loading Google Drive tools...',
+        'Loading Google Docs tools...',
         'Checking Google Maps integration...',
         'Loading TaskOps Agent...',
         'Loading CalendarOps Agent...',
         'Loading GmailOps Agent...',
         'Loading KnowledgeBase Agent...',
-        'Loading Insights Agent...',
         'Coordinator online. Analyzing your day...',
     ];
     let i = 0;
@@ -151,7 +156,12 @@ async function syncGoogleWorkspace(silent = false) {
         const data = await fetchData('/api/google/sync', { method: 'POST' });
         googleWorkspaceStatus = data.status || googleWorkspaceStatus;
         renderWorkspaceStatus(googleWorkspaceStatus);
-        if (!silent) addActivityLog('gmail_ops', `Workspace sync complete: ${data.calendar_events || 0} events, ${data.tasks || 0} tasks, ${data.threads || 0} threads`);
+        if (!silent) {
+            addActivityLog(
+                'gmail_ops',
+                `Workspace sync complete: ${data.calendar_events || 0} events, ${data.tasks || 0} tasks, ${data.threads || 0} threads, ${data.drive_files || 0} drive files, ${data.docs_files || 0} docs`,
+            );
+        }
         return data;
     } catch {
         googleWorkspaceStatus = { connected: false, state: 'error', message: 'Unable to reach the Google Workspace sync endpoint.' };
@@ -162,18 +172,28 @@ async function syncGoogleWorkspace(silent = false) {
 
 async function refreshAll() {
     await syncGoogleWorkspace(true);
-    const [localTasks, localEvents, googleTasksPayload, googleCalendarPayload, gmailSummary] = await Promise.all([
+    const [localTasks, localEvents, googleTasksPayload, googleCalendarPayload, gmailSummary, drivePayload, docsPayload] = await Promise.all([
         fetchData('/api/tasks?status=all'),
         fetchData('/api/events/today'),
         fetchData('/api/google/tasks'),
         fetchData('/api/google/calendar/today'),
         fetchData('/api/google/gmail/summary'),
+        fetchData('/api/google/drive/files'),
+        fetchData('/api/google/docs/files'),
     ]);
 
     cachedGoogleTasks = googleTasksPayload.tasks || [];
     cachedGoogleEvents = googleCalendarPayload.events || [];
     cachedGmailThreads = gmailSummary.threads || [];
-    googleWorkspaceStatus = googleCalendarPayload.status || googleTasksPayload.status || gmailSummary.status || googleWorkspaceStatus;
+    cachedDriveFiles = drivePayload.files || [];
+    cachedDocsFiles = docsPayload.docs || [];
+    googleWorkspaceStatus =
+        googleCalendarPayload.status
+        || googleTasksPayload.status
+        || gmailSummary.status
+        || drivePayload.status
+        || docsPayload.status
+        || googleWorkspaceStatus;
 
     cachedTasks = mergeTasks(localTasks, cachedGoogleTasks);
     cachedEvents = mergeEvents(localEvents, cachedGoogleEvents);
@@ -181,6 +201,8 @@ async function refreshAll() {
     renderWorkspaceStatus(googleWorkspaceStatus);
     renderGoogleCalendarPanel(cachedGoogleEvents);
     renderGmailPanel(gmailSummary);
+    renderDrivePanel(cachedDriveFiles);
+    renderDocsPanel(cachedDocsFiles);
     updateStats(cachedTasks, cachedEvents);
     renderKanban(cachedTasks);
     renderBattlePlan(cachedTasks, cachedEvents);
@@ -267,6 +289,232 @@ function renderGmailPanel(summary) {
             </div>
         </div>
     `).join('');
+}
+
+function getDriveMimeIcon(mimeType) {
+    if (!mimeType) return 'insert_drive_file';
+    if (mimeType.includes('document')) return 'description';
+    if (mimeType.includes('spreadsheet')) return 'table_chart';
+    if (mimeType.includes('presentation')) return 'slideshow';
+    if (mimeType.includes('folder')) return 'folder';
+    if (mimeType.includes('pdf')) return 'picture_as_pdf';
+    if (mimeType.includes('image')) return 'image';
+    if (mimeType.includes('video')) return 'videocam';
+    if (mimeType.includes('audio')) return 'audiotrack';
+    return 'insert_drive_file';
+}
+
+function getDriveMimeLabel(mimeType) {
+    if (!mimeType) return 'File';
+    if (mimeType.includes('document')) return 'Doc';
+    if (mimeType.includes('spreadsheet')) return 'Sheet';
+    if (mimeType.includes('presentation')) return 'Slides';
+    if (mimeType.includes('folder')) return 'Folder';
+    if (mimeType.includes('pdf')) return 'PDF';
+    if (mimeType.includes('image')) return 'Image';
+    return 'File';
+}
+
+function renderDriveFile(file) {
+    const icon = getDriveMimeIcon(file.mime_type);
+    const label = getDriveMimeLabel(file.mime_type);
+    const modified = file.modified_time ? new Date(file.modified_time).toLocaleDateString() : '';
+    const linkAttr = file.web_view_link ? `href="${esc(file.web_view_link)}" target="_blank" rel="noopener"` : '';
+    return `<div class="workspace-item drive-item">
+        <div class="workspace-item-icon drive-icon ${label.toLowerCase()}"><span class="material-icons-round">${icon}</span></div>
+        <div class="workspace-item-body">
+            <div class="workspace-item-title">
+                ${file.web_view_link
+                    ? `<a class="drive-file-link" ${linkAttr}>${esc(file.name)}</a>`
+                    : `<span>${esc(file.name)}</span>`
+                }
+                <span class="source-badge drive-type-badge">${label}</span>
+            </div>
+            <div class="workspace-item-meta">
+                ${modified ? `<span><span class="material-icons-round">schedule</span>${modified}</span>` : ''}
+                ${file.owner ? `<span><span class="material-icons-round">person</span>${esc(file.owner)}</span>` : ''}
+                ${file.size ? `<span>${esc(file.size)}</span>` : ''}
+            </div>
+            <div class="workspace-inline-actions">
+                <button class="workspace-action-btn" onclick="sendQuick('Find files related to ${esc(file.name.replace(/'/g, ''))}')">Find related</button>
+                ${file.web_view_link ? `<a class="workspace-action-btn" href="${esc(file.web_view_link)}" target="_blank" rel="noopener">Open in Drive</a>` : ''}
+            </div>
+        </div>
+    </div>`;
+}
+
+function renderDrivePanel(files, containerId = 'driveFileList') {
+    const list = document.getElementById(containerId);
+    if (!list) return;
+    if (!files || !files.length) {
+        list.innerHTML = '<div class="workspace-empty">No Drive files cached yet. Click Sync.</div>';
+        return;
+    }
+    list.innerHTML = files.map(renderDriveFile).join('');
+}
+
+function renderDriveFilesNotes(files) {
+    const el = document.getElementById('notesDriveFiles');
+    const count = document.getElementById('notesDriveCount');
+    if (count) count.textContent = files.length;
+    if (!el) return;
+    if (!files || !files.length) {
+        el.innerHTML = '<div class="workspace-empty">No Drive files cached. Sync or search above.</div>';
+        return;
+    }
+    el.innerHTML = `<div class="drive-files-grid">${files.map(renderDriveFile).join('')}</div>`;
+}
+
+function renderGoogleDoc(doc) {
+    const modified = doc.modified_time ? new Date(doc.modified_time).toLocaleDateString() : '';
+    const title = doc.title || doc.name || 'Untitled doc';
+    const docId = encodeURIComponent(doc.id || '');
+    const docTitle = encodeURIComponent(title);
+    const linkAttr = doc.web_view_link ? `href="${esc(doc.web_view_link)}" target="_blank" rel="noopener"` : '';
+    return `<div class="workspace-item docs-item">
+        <div class="workspace-item-icon docs-icon"><span class="material-icons-round">description</span></div>
+        <div class="workspace-item-body">
+            <div class="workspace-item-title">
+                ${doc.web_view_link
+                    ? `<a class="drive-file-link" ${linkAttr}>${esc(title)}</a>`
+                    : `<span>${esc(title)}</span>`
+                }
+                <span class="source-badge docs-type-badge">Doc</span>
+            </div>
+            <div class="workspace-item-meta">
+                ${modified ? `<span><span class="material-icons-round">schedule</span>${modified}</span>` : ''}
+            </div>
+            <div class="workspace-inline-actions">
+                <button class="workspace-action-btn" onclick="summarizeDocInChat('${docId}', '${docTitle}')">Summarize</button>
+                <button class="workspace-action-btn" onclick="createNoteFromDoc('${docId}', '${docTitle}')">Create note</button>
+                ${doc.web_view_link ? `<a class="workspace-action-btn" href="${esc(doc.web_view_link)}" target="_blank" rel="noopener">Open in Docs</a>` : ''}
+            </div>
+        </div>
+    </div>`;
+}
+
+function renderDocsPanel(docs, containerId = 'docsFileList') {
+    const list = document.getElementById(containerId);
+    if (!list) return;
+    if (!docs || !docs.length) {
+        list.innerHTML = '<div class="workspace-empty">No Google Docs cached yet. Click Sync.</div>';
+        return;
+    }
+    list.innerHTML = docs.map(renderGoogleDoc).join('');
+}
+
+function renderDocsFilesNotes(docs) {
+    const el = document.getElementById('notesDocsFiles');
+    const count = document.getElementById('notesDocsCount');
+    if (count) count.textContent = docs.length;
+    if (!el) return;
+    if (!docs || !docs.length) {
+        el.innerHTML = '<div class="workspace-empty">No Google Docs cached. Sync or search above.</div>';
+        return;
+    }
+    el.innerHTML = `<div class="drive-files-grid">${docs.map(renderGoogleDoc).join('')}</div>`;
+}
+
+async function searchDriveFiles() {
+    const input = document.getElementById('driveSearchInput');
+    const q = input ? input.value.trim() : '';
+    const list = document.getElementById('driveFileList');
+    if (list) list.innerHTML = '<div class="workspace-empty">Searching...</div>';
+    try {
+        const data = await fetchData(`/api/google/drive/search?q=${encodeURIComponent(q)}`);
+        const files = data.files || [];
+        cachedDriveFiles = files;
+        renderDrivePanel(files);
+        if (q) addActivityLog('knowledge_base', `Drive search: "${q}" — ${files.length} result(s)`);
+    } catch {
+        if (list) list.innerHTML = '<div class="workspace-empty">Search failed. Check connection.</div>';
+    }
+}
+
+async function searchDriveFilesNotes() {
+    const input = document.getElementById('notesDriveSearchInput');
+    const q = input ? input.value.trim() : '';
+    const el = document.getElementById('notesDriveFiles');
+    if (el) el.innerHTML = '<div class="workspace-empty">Searching...</div>';
+    try {
+        const data = await fetchData(`/api/google/drive/search?q=${encodeURIComponent(q)}`);
+        renderDriveFilesNotes(data.files || []);
+    } catch {
+        if (el) el.innerHTML = '<div class="workspace-empty">Search failed.</div>';
+    }
+}
+
+function handleDriveSearchKey(event) {
+    if (event.key === 'Enter') searchDriveFiles();
+}
+
+function handleNotesDriveSearchKey(event) {
+    if (event.key === 'Enter') searchDriveFilesNotes();
+}
+
+async function searchDocsFiles() {
+    const input = document.getElementById('docsSearchInput');
+    const q = input ? input.value.trim() : '';
+    const list = document.getElementById('docsFileList');
+    if (list) list.innerHTML = '<div class="workspace-empty">Searching...</div>';
+    try {
+        const data = await fetchData(`/api/google/docs/search?q=${encodeURIComponent(q)}`);
+        const docs = data.docs || [];
+        cachedDocsFiles = docs;
+        renderDocsPanel(docs);
+        if (q) addActivityLog('knowledge_base', `Docs search: "${q}" — ${docs.length} result(s)`);
+    } catch {
+        if (list) list.innerHTML = '<div class="workspace-empty">Search failed. Check connection.</div>';
+    }
+}
+
+async function searchDocsFilesNotes() {
+    const input = document.getElementById('notesDocsSearchInput');
+    const q = input ? input.value.trim() : '';
+    const el = document.getElementById('notesDocsFiles');
+    if (el) el.innerHTML = '<div class="workspace-empty">Searching...</div>';
+    try {
+        const data = await fetchData(`/api/google/docs/search?q=${encodeURIComponent(q)}`);
+        renderDocsFilesNotes(data.docs || []);
+    } catch {
+        if (el) el.innerHTML = '<div class="workspace-empty">Search failed.</div>';
+    }
+}
+
+function handleDocsSearchKey(event) {
+    if (event.key === 'Enter') searchDocsFiles();
+}
+
+function handleNotesDocsSearchKey(event) {
+    if (event.key === 'Enter') searchDocsFilesNotes();
+}
+
+function toggleDriveSection() {
+    drivesSectionOpen = !drivesSectionOpen;
+    const files = document.getElementById('notesDriveFiles');
+    const chevron = document.getElementById('notesDriveChevron');
+    if (files) files.style.display = drivesSectionOpen ? '' : 'none';
+    if (chevron) chevron.textContent = drivesSectionOpen ? 'expand_less' : 'expand_more';
+}
+
+function toggleDocsSection() {
+    docsSectionOpen = !docsSectionOpen;
+    const files = document.getElementById('notesDocsFiles');
+    const chevron = document.getElementById('notesDocsChevron');
+    if (files) files.style.display = docsSectionOpen ? '' : 'none';
+    if (chevron) chevron.textContent = docsSectionOpen ? 'expand_less' : 'expand_more';
+}
+
+function summarizeDocInChat(encodedDocId, encodedTitle) {
+    const docId = decodeURIComponent(encodedDocId);
+    const title = decodeURIComponent(encodedTitle);
+    sendQuick(`Summarize my Google Doc "${title}" with document ID ${docId}.`);
+}
+
+function createNoteFromDoc(encodedDocId, encodedTitle) {
+    const docId = decodeURIComponent(encodedDocId);
+    const title = decodeURIComponent(encodedTitle);
+    sendQuick(`Read Google Doc "${title}" (document ID ${docId}), summarize key points, and create a note with actionable tags.`);
 }
 
 function quickCreateGoogleEvent() {
@@ -927,6 +1175,8 @@ function getWeekStart(offset) {
 
 async function loadNotesView() {
     renderNotes(await fetchData('/api/notes'));
+    renderDriveFilesNotes(cachedDriveFiles);
+    renderDocsFilesNotes(cachedDocsFiles);
 }
 
 function renderNotes(notes) {
@@ -1040,6 +1290,7 @@ function guessSteps(message) {
     const lower = message.toLowerCase();
     const steps = ['Coordinator analyzing intent...'];
     if (lower.includes('inbox') || lower.includes('gmail') || lower.includes('reply')) steps.push('GmailOps: Reviewing Gmail threads...', 'TaskOps: Capturing follow-up actions...');
+    else if (lower.includes('drive') || lower.includes('file') || lower.includes('find files') || lower.includes('document') || lower.includes('docs')) steps.push('KnowledgeBase: Searching Google Drive and Docs...', 'KnowledgeBase: Analyzing results...');
     else if (lower.includes('prepare') || lower.includes('meeting') || lower.includes('schedule')) steps.push('CalendarOps: Checking schedule...', 'TaskOps: Planning follow-up work...');
     else if (lower.includes('briefing') || lower.includes('focus')) steps.push('Insights: Building strategic briefing...', 'CalendarOps: Reviewing schedule...');
     else if (lower.includes('what if') || lower.includes('day off') || lower.includes('simulate')) steps.push('Insights: Running what-if simulation...');
@@ -1210,6 +1461,12 @@ async function animateRealOrchestration(agents, tools) {
         get_directions: 'calendar_ops',
         create_note: 'knowledge_base',
         create_note_linked: 'knowledge_base',
+        safe_search_drive_files: 'knowledge_base',
+        safe_list_drive_files: 'knowledge_base',
+        safe_get_drive_file_metadata: 'knowledge_base',
+        safe_search_google_docs: 'knowledge_base',
+        safe_list_google_docs: 'knowledge_base',
+        safe_get_google_doc_content: 'knowledge_base',
         daily_briefing: 'insights',
         weekly_report: 'insights',
         workload_analysis: 'insights',

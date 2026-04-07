@@ -69,7 +69,7 @@
                 </div>
                 <div class="agent-status">
                     <div class="status-dot"></div>
-                    <span>6 Agents · 6 Tool Sources</span>
+                    <span>6 Agents · 7 Tool Sources</span>
                 </div>
             </div>
         </aside>
@@ -197,7 +197,7 @@
                             </div>
                         </div>
                         <div class="workspace-status-copy" id="googleWorkspaceCopy">
-                            Connect a community Google Workspace MCP server and this panel will surface Calendar, Gmail, and Tasks in the dashboard.
+                            Connect a community Google Workspace MCP server and this panel will surface Calendar, Gmail, Tasks, Drive files, and Docs in the dashboard.
                         </div>
                     </div>
 
@@ -226,6 +226,40 @@
                         </div>
                         <div class="workspace-list" id="gmailThreadList">
                             <div class="timeline-empty">No Gmail summary yet.</div>
+                        </div>
+                    </div>
+
+                    <div class="workspace-card workspace-drive-card">
+                        <div class="section-header workspace-header">
+                            <div>
+                                <h3><span class="material-icons-round">folder</span> Google Drive</h3>
+                                <span class="section-subtitle">Recently modified files from your connected Drive</span>
+                            </div>
+                            <div class="drive-search-bar">
+                                <span class="material-icons-round drive-search-icon">search</span>
+                                <input type="text" id="driveSearchInput" class="drive-search-input" placeholder="Search files..." onkeydown="handleDriveSearchKey(event)">
+                                <button class="cmd-btn secondary drive-search-btn" onclick="searchDriveFiles()">Go</button>
+                            </div>
+                        </div>
+                        <div class="workspace-list" id="driveFileList">
+                            <div class="timeline-empty">Sync Google Workspace to load Drive files.</div>
+                        </div>
+                    </div>
+
+                    <div class="workspace-card workspace-docs-card">
+                        <div class="section-header workspace-header">
+                            <div>
+                                <h3><span class="material-icons-round">description</span> Google Docs</h3>
+                                <span class="section-subtitle">Search and open Docs from your connected Google account</span>
+                            </div>
+                            <div class="drive-search-bar">
+                                <span class="material-icons-round drive-search-icon">search</span>
+                                <input type="text" id="docsSearchInput" class="drive-search-input" placeholder="Search docs..." onkeydown="handleDocsSearchKey(event)">
+                                <button class="cmd-btn secondary drive-search-btn" onclick="searchDocsFiles()">Go</button>
+                            </div>
+                        </div>
+                        <div class="workspace-list" id="docsFileList">
+                            <div class="timeline-empty">Sync Google Workspace to load Google Docs.</div>
                         </div>
                     </div>
                 </div>
@@ -399,6 +433,49 @@
             </div>
 
             <div class="view" id="view-notes">
+                <div class="notes-drive-section">
+                    <div class="notes-drive-header" onclick="toggleDriveSection()">
+                        <div class="notes-drive-title">
+                            <span class="material-icons-round">folder</span>
+                            <span>Google Drive Files</span>
+                            <span class="notes-drive-count" id="notesDriveCount">0</span>
+                        </div>
+                        <div class="notes-drive-actions">
+                            <div class="drive-search-bar drive-search-bar-notes">
+                                <span class="material-icons-round drive-search-icon">search</span>
+                                <input type="text" id="notesDriveSearchInput" class="drive-search-input" placeholder="Search Drive..." onkeydown="handleNotesDriveSearchKey(event)" onclick="event.stopPropagation()">
+                                <button class="cmd-btn secondary drive-search-btn" onclick="event.stopPropagation(); searchDriveFilesNotes()">Go</button>
+                            </div>
+                            <span class="material-icons-round notes-drive-chevron" id="notesDriveChevron">expand_more</span>
+                        </div>
+                    </div>
+                    <div class="notes-drive-files" id="notesDriveFiles">
+                        <div class="timeline-empty">Sync to load Drive files.</div>
+                    </div>
+                </div>
+                <div class="notes-drive-section">
+                    <div class="notes-drive-header" onclick="toggleDocsSection()">
+                        <div class="notes-drive-title">
+                            <span class="material-icons-round">description</span>
+                            <span>Google Docs</span>
+                            <span class="notes-drive-count" id="notesDocsCount">0</span>
+                        </div>
+                        <div class="notes-drive-actions">
+                            <div class="drive-search-bar drive-search-bar-notes">
+                                <span class="material-icons-round drive-search-icon">search</span>
+                                <input type="text" id="notesDocsSearchInput" class="drive-search-input" placeholder="Search Docs..." onkeydown="handleNotesDocsSearchKey(event)" onclick="event.stopPropagation()">
+                                <button class="cmd-btn secondary drive-search-btn" onclick="event.stopPropagation(); searchDocsFilesNotes()">Go</button>
+                            </div>
+                            <span class="material-icons-round notes-drive-chevron" id="notesDocsChevron">expand_more</span>
+                        </div>
+                    </div>
+                    <div class="notes-drive-files" id="notesDocsFiles">
+                        <div class="timeline-empty">Sync to load Google Docs.</div>
+                    </div>
+                </div>
+                <div class="notes-section-label">
+                    <span class="material-icons-round">sticky_note_2</span> Local Notes
+                </div>
                 <div class="notes-grid" id="notesGrid"><div class="timeline-empty">Loading notes...</div></div>
             </div>
 
@@ -433,7 +510,7 @@
                             <div class="node-pulse"></div>
                             <div class="node-icon"><span class="material-icons-round">menu_book</span></div>
                             <div class="node-label">KnowledgeBase</div>
-                            <div class="node-tools">SQL + Gemini</div>
+                            <div class="node-tools">SQL + Drive + Docs + Gemini</div>
                             <div class="node-live-status" id="status-knowledge">Standby</div>
                         </div>
                         <div class="agent-node sub-node" id="node-insights">
@@ -474,9 +551,10 @@
                     </div>
                     <div class="arch-cards">
                         <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">storage</span></div><h4>MCP Toolbox</h4><p>SQL tools for tasks, events, notes, and reporting</p></div>
-                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">link</span></div><h4>Workspace MCP</h4><p>Community MCP for Google Calendar, Gmail, and Google Tasks</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">link</span></div><h4>Workspace MCP</h4><p>Community MCP for Google Calendar, Gmail, Google Tasks, Drive, and Docs</p></div>
                         <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">map</span></div><h4>Google Maps</h4><p>Places and directions for venue-aware scheduling</p></div>
-                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">search</span></div><h4>Google Search</h4><p>Grounded research for notes and summaries</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">folder</span></div><h4>Google Drive</h4><p>Search, browse, and link files from your connected Google Drive</p></div>
+                        <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">description</span></div><h4>Google Docs</h4><p>Search and summarize connected Google Docs from chat and dashboard</p></div>
                         <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">code</span></div><h4>Python Tools</h4><p>Scheduling logic, drafts, and report formatting</p></div>
                         <div class="arch-card"><div class="arch-icon"><span class="material-icons-round">analytics</span></div><h4>Analytics</h4><p>Dashboard stats, workload simulation, and reporting</p></div>
                     </div>
@@ -502,12 +580,13 @@
                 <div class="message bot-message">
                     <div class="message-avatar"><span class="material-icons-round">psychology</span></div>
                     <div class="message-content">
-                        <p>I'm your AI Chief of Staff. I coordinate <strong>6 specialized agents</strong> across <strong>6 tool sources</strong> to manage your productivity.</p>
+                        <p>I'm your AI Chief of Staff. I coordinate <strong>6 specialized agents</strong> across <strong>7 tool sources</strong> to manage your productivity.</p>
                         <div class="tool-sources-mini">
                             <span class="tool-chip sql"><span class="material-icons-round">storage</span>Cloud SQL</span>
                             <span class="tool-chip gmail"><span class="material-icons-round">mail</span>Workspace MCP</span>
+                            <span class="tool-chip drive"><span class="material-icons-round">folder</span>Drive</span>
+                            <span class="tool-chip drive"><span class="material-icons-round">description</span>Docs</span>
                             <span class="tool-chip maps"><span class="material-icons-round">map</span>Maps</span>
-                            <span class="tool-chip search"><span class="material-icons-round">search</span>Search</span>
                             <span class="tool-chip python"><span class="material-icons-round">code</span>Python</span>
                             <span class="tool-chip bq"><span class="material-icons-round">analytics</span>Analytics</span>
                         </div>
@@ -519,6 +598,7 @@
                             <button class="quick-btn" onclick="sendQuick('What if I take Friday off?')"><span class="material-icons-round">flight</span>What-If</button>
                             <button class="quick-btn" onclick="sendQuick('Schedule a team lunch somewhere nice near downtown')"><span class="material-icons-round">restaurant</span>Find Venue</button>
                             <button class="quick-btn" onclick="sendQuick('Draft a reply to my most important email')"><span class="material-icons-round">reply</span>Draft Reply</button>
+                            <button class="quick-btn" onclick="sendQuick('Find files in my Drive and Docs related to my upcoming meetings')"><span class="material-icons-round">folder_open</span>Find Files/Docs</button>
                             <button class="quick-btn" onclick="sendQuick('Generate my weekly productivity report')"><span class="material-icons-round">assessment</span>Report</button>
                         </div>
                     </div>

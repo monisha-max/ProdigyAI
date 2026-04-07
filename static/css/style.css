@@ -1136,6 +1136,7 @@ body.chat-open .chat-fab { display: none; }
 .tool-chip.python { background: rgba(253,203,110,0.12); color: var(--warning); }
 .tool-chip.bq { background: rgba(253,121,168,0.12); color: #FD79A8; }
 .tool-chip.gmail { background: rgba(255,255,255,0.08); color: #9ac7ff; }
+.tool-chip.drive { background: rgba(0,184,148,0.12); color: var(--success); }
 
 /* Agent node tools label */
 .node-tools {
@@ -1443,6 +1444,12 @@ body.chat-open .chat-fab { display: none; }
 }
 .workspace-item-icon.calendar { background: rgba(116,185,255,0.15); color: var(--info); }
 .workspace-item-icon.gmail { background: rgba(108,92,231,0.15); color: var(--primary-light); }
+.workspace-item-icon.drive-icon { background: rgba(0,184,148,0.12); color: var(--success); }
+.workspace-item-icon.docs-icon { background: rgba(116,185,255,0.14); color: var(--info); }
+.workspace-item-icon.drive-icon.doc { background: rgba(116,185,255,0.12); color: var(--info); }
+.workspace-item-icon.drive-icon.sheet { background: rgba(0,184,148,0.15); color: var(--success); }
+.workspace-item-icon.drive-icon.slides { background: rgba(253,203,110,0.12); color: var(--warning); }
+.workspace-item-icon.drive-icon.pdf { background: rgba(225,112,85,0.12); color: var(--danger); }
 .workspace-item-body { flex: 1; min-width: 0; }
 .workspace-item-title {
     display: flex;
@@ -1493,6 +1500,123 @@ body.chat-open .chat-fab { display: none; }
     border-color: var(--primary);
     color: var(--primary-light);
 }
+
+/* ─── Google Drive UI ─── */
+.workspace-drive-card { grid-column: 1 / -1; }
+.workspace-docs-card { grid-column: 1 / -1; }
+
+.drive-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+}
+.drive-search-bar-notes {
+    margin-right: 8px;
+}
+.drive-search-icon {
+    font-size: 16px !important;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.drive-search-input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-family: inherit;
+    width: 160px;
+}
+.drive-search-input::placeholder { color: var(--text-muted); }
+.drive-search-btn {
+    padding: 4px 10px !important;
+    font-size: 0.72rem !important;
+    flex-shrink: 0;
+}
+
+.drive-file-link {
+    color: var(--text-primary);
+    text-decoration: none;
+    font-weight: 500;
+}
+.drive-file-link:hover { color: var(--primary-light); text-decoration: underline; }
+
+.drive-type-badge {
+    background: rgba(0,184,148,0.12) !important;
+    color: var(--success) !important;
+    border-color: rgba(0,184,148,0.2) !important;
+}
+.docs-type-badge {
+    background: rgba(116,185,255,0.12) !important;
+    color: var(--info) !important;
+    border-color: rgba(116,185,255,0.22) !important;
+}
+
+.drive-files-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 8px;
+    padding: 4px 0;
+}
+
+/* Notes view Drive section */
+.notes-drive-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 20px;
+    overflow: hidden;
+}
+.notes-drive-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+}
+.notes-drive-header:hover { background: var(--bg-card-hover); }
+.notes-drive-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.notes-drive-title .material-icons-round { color: var(--success); font-size: 18px; }
+.notes-drive-count {
+    background: rgba(0,184,148,0.15);
+    color: var(--success);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+.notes-drive-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.notes-drive-chevron { color: var(--text-muted); font-size: 20px !important; transition: transform 0.2s; }
+.notes-drive-files {
+    padding: 12px 16px;
+}
+
+.notes-section-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+}
+.notes-section-label .material-icons-round { font-size: 16px; color: var(--primary-light); }
 
 /* Source labels */
 .source-badge {

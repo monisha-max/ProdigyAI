@@ -9,6 +9,7 @@ adapter and cached locally for the UI.
 import uuid
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
+import re
 
 import dotenv
 from fastapi import FastAPI, HTTPException
@@ -21,20 +22,26 @@ from pydantic import BaseModel
 
 from prodigy_ai.agent import root_agent
 from prodigy_ai.db import (
+    cache_google_docs,
     cache_gmail_threads,
     cache_google_calendar_events,
+    cache_google_drive_files,
     cache_google_tasks,
     get_events_range as db_get_events_range,
     get_events_today as db_get_events_today,
     get_gmail_summary as db_get_gmail_summary,
     get_google_calendar_range as db_get_google_calendar_range,
     get_google_calendar_today as db_get_google_calendar_today,
+    get_google_docs as db_get_google_docs,
+    get_google_drive_files as db_get_google_drive_files,
     get_google_tasks as db_get_google_tasks,
     get_notes as db_get_notes,
     get_tasks as db_get_tasks,
     get_workload as db_get_workload,
     mark_google_task_complete as db_mark_google_task_complete,
     record_google_sync,
+    search_google_docs_cache as db_search_google_docs,
+    search_google_drive_files_cache as db_search_drive_files,
     simulate_day_off as db_simulate_day_off,
     update_task as db_update_task,
 )
@@ -44,11 +51,16 @@ from prodigy_ai.tools.google_workspace_tools import (
     create_google_task,
     list_calendar_events,
     get_gmail_thread_summary,
+    get_google_doc_content,
     get_workspace_status,
     list_calendar_events_today,
+    list_google_docs,
+    list_drive_files,
     list_google_tasks,
     list_priority_gmail_threads,
     complete_google_task,
+    search_google_docs,
+    search_drive_files,
 )
 
 dotenv.load_dotenv()
@@ -131,6 +143,8 @@ def _sync_google_workspace():
             "calendar_events": 0,
             "tasks": 0,
             "threads": 0,
+            "drive_files": 0,
+            "docs_files": 0,
         }
 
     today = date.today()
@@ -158,6 +172,20 @@ def _sync_google_workspace():
     except Exception as exc:
         errors.append(f"gmail: {exc}")
 
+    drive = {"files": []}
+    try:
+        drive = list_drive_files(max_results=20)
+        cache_google_drive_files(drive.get("files", []))
+    except Exception as exc:
+        errors.append(f"drive: {exc}")
+
+    docs = {"docs": []}
+    try:
+        docs = list_google_docs(max_results=20)
+        cache_google_docs(docs.get("docs", []))
+    except Exception as exc:
+        errors.append(f"docs: {exc}")
+
     record_google_sync("workspace", status="connected" if not errors else "partial", error="; ".join(errors) or None)
 
     return {
@@ -165,7 +193,127 @@ def _sync_google_workspace():
         "calendar_events": len(calendar.get("events", [])),
         "tasks": len(tasks.get("tasks", [])),
         "threads": len(gmail.get("threads", [])),
+        "drive_files": len(drive.get("files", [])),
+        "docs_files": len(docs.get("docs", [])),
         "warnings": errors,
+    }
+
+
+def _calendar_query_dates(message: str) -> tuple[str, str] | None:
+    lower = message.lower()
+    today = date.today()
+
+    if "tomorrow" in lower:
+        d = today + timedelta(days=1)
+        value = d.isoformat()
+        return value, value
+
+    if "today" in lower:
+        value = today.isoformat()
+        return value, value
+
+    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", lower)
+    if len(dates) >= 2:
+        return dates[0], dates[1]
+    if len(dates) == 1:
+        return dates[0], dates[0]
+    return None
+
+
+def _is_calendar_read_query(message: str) -> bool:
+    lower = message.lower()
+    has_calendar_topic = any(
+        token in lower
+        for token in [
+            "meeting",
+            "meetings",
+            "calendar",
+            "schedule",
+            "scheduled",
+            "event",
+            "events",
+        ]
+    )
+    if not has_calendar_topic:
+        return False
+
+    has_create_intent = any(
+        token in lower
+        for token in [
+            "create",
+            "add ",
+            "book ",
+            "set up",
+            "reschedule",
+            "move ",
+            "cancel ",
+            "delete ",
+        ]
+    )
+    if has_create_intent:
+        return False
+
+    has_read_intent = any(
+        token in lower
+        for token in [
+            "what",
+            "show",
+            "list",
+            "do i have",
+            "any ",
+            "my calendar",
+            "my meetings",
+        ]
+    )
+    if not has_read_intent:
+        return False
+
+    return bool(_calendar_query_dates(message))
+
+
+def _format_calendar_window(start_date: str, end_date: str) -> str:
+    if start_date == end_date:
+        return start_date
+    return f"{start_date} to {end_date}"
+
+
+def _direct_google_calendar_reply(message: str) -> dict | None:
+    if not _is_calendar_read_query(message):
+        return None
+
+    date_window = _calendar_query_dates(message)
+    if not date_window:
+        return None
+    start_date, end_date = date_window
+
+    try:
+        result = list_calendar_events(start_date=start_date, end_date=end_date)
+    except Exception:
+        return None
+
+    events = result.get("events", []) if isinstance(result, dict) else []
+    window = _format_calendar_window(start_date, end_date)
+    if not events:
+        return {
+            "response": f"I don't see any meetings scheduled for {window}.",
+            "agents": ["calendar_direct"],
+            "tools": ["safe_list_google_calendar_events"],
+        }
+
+    sorted_events = sorted(events, key=lambda item: ((item.get("event_date") or ""), (item.get("start_time") or "")))
+    lines = [f"I found {len(sorted_events)} meeting(s) for {window}:"]
+    for item in sorted_events[:12]:
+        event_date = item.get("event_date") or start_date
+        start_time = item.get("start_time") or "all day"
+        title = item.get("title") or "Untitled event"
+        location = item.get("location") or ""
+        tail = f" ({location})" if location else ""
+        lines.append(f"- {event_date} {start_time} - {title}{tail}")
+
+    return {
+        "response": "\n".join(lines),
+        "agents": ["calendar_direct"],
+        "tools": ["safe_list_google_calendar_events"],
     }
 
 
@@ -380,6 +528,64 @@ async def api_google_task_from_email(request: GmailTaskRequest):
         return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
 
 
+@app.get("/api/google/drive/files")
+async def api_google_drive_files():
+    try:
+        return JSONResponse(content={"status": _status_payload(), "files": db_get_google_drive_files(limit=20)})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "files": [], "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/drive/search")
+async def api_google_drive_search(q: str = ""):
+    try:
+        if not q.strip():
+            return JSONResponse(content={"status": _status_payload(), "files": db_get_google_drive_files(limit=20), "query": ""})
+        live = search_drive_files(query=q, max_results=20)
+        files = live.get("files", [])
+        if files:
+            cache_google_drive_files(files)
+        else:
+            files = db_search_drive_files(q)
+        return JSONResponse(content={"status": _status_payload(), "files": files, "query": q})
+    except Exception as exc:
+        fallback = db_search_drive_files(q) if q.strip() else db_get_google_drive_files(limit=20)
+        return JSONResponse(content={"status": _status_payload(), "files": fallback, "query": q, "error": str(exc)})
+
+
+@app.get("/api/google/docs/files")
+async def api_google_docs_files():
+    try:
+        return JSONResponse(content={"status": _status_payload(), "docs": db_get_google_docs(limit=20)})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "docs": [], "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/docs/search")
+async def api_google_docs_search(q: str = ""):
+    try:
+        if not q.strip():
+            return JSONResponse(content={"status": _status_payload(), "docs": db_get_google_docs(limit=20), "query": ""})
+        live = search_google_docs(query=q, max_results=20)
+        docs = live.get("docs", [])
+        if docs:
+            cache_google_docs(docs)
+        else:
+            docs = db_search_google_docs(q)
+        return JSONResponse(content={"status": _status_payload(), "docs": docs, "query": q})
+    except Exception as exc:
+        fallback = db_search_google_docs(q) if q.strip() else db_get_google_docs(limit=20)
+        return JSONResponse(content={"status": _status_payload(), "docs": fallback, "query": q, "error": str(exc)})
+
+
+@app.get("/api/google/docs/{doc_id}/content")
+async def api_google_doc_content(doc_id: str):
+    try:
+        return JSONResponse(content=get_google_doc_content(doc_id, markdown=True))
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "doc": None, "error": str(exc)}, status_code=500)
+
+
 @app.post("/api/google/draft-from-email")
 async def api_google_draft_from_email(request: GmailDraftRequest):
     try:
@@ -401,6 +607,11 @@ async def api_google_draft_from_email(request: GmailDraftRequest):
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     import asyncio
+
+    direct = _direct_google_calendar_reply(request.message)
+    if direct:
+        sid = await get_or_create_session(request.session_id or str(uuid.uuid4()))
+        return {**direct, "session_id": sid}
 
     max_retries = 2
     for attempt in range(max_retries + 1):

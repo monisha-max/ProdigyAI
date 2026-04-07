@@ -38,6 +38,12 @@ DEFAULT_TOOL_MAP = {
     "gmail_list_priority_threads": "search_gmail_messages",
     "gmail_get_thread_summary": "get_gmail_thread_content",
     "gmail_create_draft": "draft_gmail_message",
+    "drive_search": "search_drive_files",
+    "drive_list": "list_drive_items",
+    "drive_get": "get_drive_file_content",
+    "docs_search": "search_docs",
+    "docs_get_content": "get_doc_content",
+    "docs_get_markdown": "get_doc_as_markdown",
 }
 
 TOOL_HINTS = {
@@ -49,6 +55,12 @@ TOOL_HINTS = {
     "gmail_list_priority_threads": ["gmail", "email", "thread", "threads", "inbox", "list", "search"],
     "gmail_get_thread_summary": ["gmail", "email", "thread", "message", "read", "get", "summary"],
     "gmail_create_draft": ["gmail", "email", "draft", "reply", "compose", "create"],
+    "drive_search": ["drive", "file", "files", "search", "find", "query", "document"],
+    "drive_list": ["drive", "file", "files", "list", "recent", "browse"],
+    "drive_get": ["drive", "file", "get", "metadata", "read", "fetch"],
+    "docs_search": ["docs", "document", "search", "find", "google doc", "google docs", "list"],
+    "docs_get_content": ["docs", "document", "content", "read", "get", "body", "text"],
+    "docs_get_markdown": ["docs", "document", "markdown", "content", "read", "export"],
 }
 
 
@@ -230,6 +242,16 @@ def _extract_result_text(payload: Any) -> str:
     return ""
 
 
+def _raise_if_tool_error(text: str) -> None:
+    if not text:
+        return
+    lowered = text.strip().lower()
+    if lowered.startswith("error calling tool") or "validation error for call[" in lowered:
+        raise RuntimeError(text.strip())
+    if "unexpected keyword argument" in lowered or "missing required" in lowered:
+        raise RuntimeError(text.strip())
+
+
 def _extract_labeled_value(text: str, labels: list[str]) -> str:
     for label in labels:
         pattern = re.compile(rf"(?im)(?:^|\|\s*){re.escape(label)}\s*:\s*(.+?)(?:\s*\|\s*|$)")
@@ -326,7 +348,19 @@ def _parse_calendar_text(text: str, start_date: str, end_date: str) -> list[dict
                 "source": "google",
             }
         )
-    return events
+    cleaned = []
+    for item in events:
+        if (
+            not item.get("id")
+            and item.get("title") == "Google event"
+            and not item.get("start_time")
+            and not item.get("end_time")
+            and not item.get("location")
+            and not item.get("summary")
+        ):
+            continue
+        cleaned.append(item)
+    return cleaned
 
 
 def _parse_task_text(text: str) -> list[dict[str, Any]]:
@@ -536,10 +570,11 @@ def list_calendar_events(start_date: str | None = None, end_date: str | None = N
             "time_max": f"{end_date}T23:59:59Z",
             "calendar_id": "primary",
             "max_results": 250,
-            "timezone": _workspace_timezone(),
         },
     )
-    events = _parse_calendar_text(_extract_result_text(payload), start_date, end_date)
+    text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
+    events = _parse_calendar_text(text, start_date, end_date)
     return {"status": status, "events": events, "tool": tool_name}
 
 
@@ -561,6 +596,7 @@ def create_calendar_event(
     status = get_workspace_status()
     if not status["connected"]:
         return {"status": status, "event": None}
+    resolved_timezone = timezone or _workspace_timezone() or "UTC"
     payload, tool_name = _call_remote_tool(
         "calendar_create_event",
         {
@@ -573,10 +609,12 @@ def create_calendar_event(
             "attendees": [item.strip() for item in attendees.split(",") if item.strip()],
             "description": description,
             "calendar_id": "primary",
-            "timezone": timezone or _workspace_timezone(),
+            "timezone": resolved_timezone,
+            "send_updates": "all",
         },
     )
     text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
     parsed = _parse_calendar_text(text, event_date, event_date)
     item = parsed[0] if parsed else {}
     event = {
@@ -732,9 +770,360 @@ def create_gmail_draft(
     return {"status": status, "draft": draft, "tool": tool_name}
 
 
+DRIVE_MIME_LABELS = {
+    "application/vnd.google-apps.document": "Google Doc",
+    "application/vnd.google-apps.spreadsheet": "Google Sheet",
+    "application/vnd.google-apps.presentation": "Google Slides",
+    "application/vnd.google-apps.folder": "Folder",
+    "application/pdf": "PDF",
+}
+
+
+def _parse_drive_files_text(text: str) -> list[dict[str, Any]]:
+    files: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    # Bullet-style:
+    # - Name: "File" (ID: abc123, Type: application/pdf, Size: 100, Modified: 2026-01-01T00:00:00Z) Link: https://...
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        id_match = re.search(r"(?i)\bID:\s*([^,)\s]+)", stripped)
+        name_match = re.search(r'(?i)-\s*Name:\s*(?:"([^"]+)"|([^(\n]+))', stripped)
+        if not (id_match and name_match):
+            continue
+        file_id = id_match.group(1).strip()
+        if file_id in seen_ids:
+            continue
+        seen_ids.add(file_id)
+        name_value = (name_match.group(1) or name_match.group(2) or "").strip().strip('"')
+        link_match = re.search(r"(?i)\bLink:\s*(https?://\S+)", stripped)
+        mime_match = re.search(r"(?i)\bType:\s*([^,)\s]+)", stripped)
+        size_match = re.search(r"(?i)\bSize:\s*([^,)\s]+)", stripped)
+        modified_match = re.search(r"(?i)\bModified:\s*([^) \t]+)", stripped)
+        files.append({
+            "id": file_id,
+            "name": name_value,
+            "mime_type": mime_match.group(1).strip() if mime_match else "",
+            "web_view_link": link_match.group(1).strip() if link_match else "",
+            "modified_time": _coerce_dt(modified_match.group(1).strip() if modified_match else None),
+            "owner": "",
+            "size": size_match.group(1).strip() if size_match else None,
+            "source": "google",
+        })
+
+    if files:
+        return [f for f in files if ((f.get("name") and f["name"] != "Untitled") or f.get("id"))]
+
+    # Block-style: labeled key-value blocks
+    for block in _record_blocks(text, ["File ID", "ID", "Name", "Title"]):
+        file_id = _extract_labeled_value(block, ["File ID", "ID"])
+        if file_id and file_id in seen_ids:
+            continue
+        if file_id:
+            seen_ids.add(file_id)
+        name = _extract_labeled_value(block, ["Name", "Title"]) or "Untitled"
+        link = _extract_labeled_value(block, ["Link", "Web View Link", "URL"])
+        if not link:
+            link_match = re.search(r"https?://\S+", block)
+            link = link_match.group(0).strip() if link_match else ""
+        files.append({
+            "id": file_id,
+            "name": name,
+            "mime_type": _extract_labeled_value(block, ["MIME Type", "Type", "Kind"]),
+            "web_view_link": link,
+            "modified_time": _coerce_dt(_extract_labeled_value(block, ["Modified", "Modified Time", "Last Modified"])),
+            "owner": _extract_labeled_value(block, ["Owner", "Created By"]),
+            "size": _extract_labeled_value(block, ["Size"]) or None,
+            "source": "google",
+        })
+
+    return [f for f in files if ((f.get("name") and f["name"] != "Untitled") or f.get("id"))]
+
+
+def search_drive_files(query: str = "", max_results: int = 20) -> dict[str, Any]:
+    """Search Google Drive files by name or content.
+
+    Args:
+        query: Search terms (file name, content keywords, etc.)
+        max_results: Maximum number of results to return (default 20)
+    """
+    status = get_workspace_status()
+    if not status["connected"]:
+        return {"status": status, "files": []}
+    clean_query = query.strip()
+    if not clean_query:
+        return list_drive_files(max_results=max_results)
+    payload, tool_name = _call_remote_tool(
+        "drive_search",
+        {
+            "user_google_email": _workspace_user_email(),
+            "query": clean_query,
+            "page_size": max_results,
+        },
+    )
+    text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
+    files = _parse_drive_files_text(text)
+    return {"status": status, "files": files, "tool": tool_name, "query": query}
+
+
+def list_drive_files(max_results: int = 20) -> dict[str, Any]:
+    """List recently modified Google Drive files.
+
+    Args:
+        max_results: Maximum number of files to return (default 20)
+    """
+    status = get_workspace_status()
+    if not status["connected"]:
+        return {"status": status, "files": []}
+    payload, tool_name = _call_remote_tool(
+        "drive_list",
+        {
+            "user_google_email": _workspace_user_email(),
+            "page_size": max_results,
+        },
+    )
+    text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
+    files = _parse_drive_files_text(text)
+    return {"status": status, "files": files, "tool": tool_name}
+
+
+def get_drive_file_metadata(file_id: str) -> dict[str, Any]:
+    """Get metadata for a specific Google Drive file.
+
+    Args:
+        file_id: The Google Drive file ID
+    """
+    status = get_workspace_status()
+    if not status["connected"]:
+        return {"status": status, "file": None}
+    payload, tool_name = _call_remote_tool(
+        "drive_get",
+        {
+            "user_google_email": _workspace_user_email(),
+            "file_id": file_id,
+        },
+    )
+    text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
+    parsed = _parse_drive_files_text(text)
+    file = parsed[0] if parsed else {
+        "id": file_id,
+        "name": _extract_labeled_value(text, ["Name", "Title"]) or "Unknown",
+        "mime_type": _extract_labeled_value(text, ["MIME Type", "Type"]),
+        "web_view_link": _extract_labeled_value(text, ["Link", "URL"]),
+        "modified_time": None,
+        "owner": "",
+        "size": None,
+        "source": "google",
+    }
+    return {"status": status, "file": file, "tool": tool_name}
+
+
+def safe_search_drive_files(query: str = "", max_results: int = 20) -> dict[str, Any]:
+    try:
+        return search_drive_files(query, max_results)
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "files": [], "error": str(exc)}
+
+
+def safe_list_drive_files(max_results: int = 20) -> dict[str, Any]:
+    try:
+        return list_drive_files(max_results)
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "files": [], "error": str(exc)}
+
+
+def safe_get_drive_file_metadata(file_id: str) -> dict[str, Any]:
+    try:
+        return get_drive_file_metadata(file_id)
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "file": None, "error": str(exc)}
+
+
+def _parse_google_docs_text(text: str) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    line_re = re.compile(
+        r"""(?ix)
+        ^-\s+
+        (?P<title>.+?)\s+
+        \(ID:\s*(?P<id>[^)]+)\)\s+
+        Modified:\s*(?P<modified>\S+)\s+
+        Link:\s*(?P<link>https?://\S+)
+        """,
+    )
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        match = line_re.match(stripped)
+        if not match:
+            continue
+        doc_id = match.group("id").strip()
+        if doc_id in seen_ids:
+            continue
+        seen_ids.add(doc_id)
+        title = match.group("title").strip()
+        link = match.group("link").strip()
+        docs.append(
+            {
+                "id": doc_id,
+                "title": title,
+                "name": title,
+                "mime_type": "application/vnd.google-apps.document",
+                "web_view_link": link,
+                "modified_time": _coerce_dt(match.group("modified").strip()),
+                "source": "google",
+            }
+        )
+
+    if docs:
+        return docs
+
+    for block in _record_blocks(text, ["Document ID", "ID", "Title", "Name"]):
+        doc_id = _extract_labeled_value(block, ["Document ID", "ID"])
+        if doc_id and doc_id in seen_ids:
+            continue
+        if doc_id:
+            seen_ids.add(doc_id)
+        title = _extract_labeled_value(block, ["Title", "Name"]) or "Untitled"
+        link = _extract_labeled_value(block, ["Link", "URL", "Web View Link"])
+        if not link:
+            link_match = re.search(r"https?://\S+", block)
+            link = link_match.group(0).strip() if link_match else ""
+        docs.append(
+            {
+                "id": doc_id,
+                "title": title,
+                "name": title,
+                "mime_type": "application/vnd.google-apps.document",
+                "web_view_link": link,
+                "modified_time": _coerce_dt(_extract_labeled_value(block, ["Modified", "Modified Time", "Last Modified"])),
+                "source": "google",
+            }
+        )
+    return [doc for doc in docs if doc.get("id") and doc.get("title")]
+
+
+def search_google_docs(query: str = "", max_results: int = 20) -> dict[str, Any]:
+    status = get_workspace_status()
+    if not status["connected"]:
+        return {"status": status, "docs": []}
+    payload, tool_name = _call_remote_tool(
+        "docs_search",
+        {
+            "user_google_email": _workspace_user_email(),
+            "query": query.strip(),
+            "page_size": max_results,
+        },
+    )
+    text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
+    docs = _parse_google_docs_text(text)
+    return {"status": status, "docs": docs, "tool": tool_name, "query": query}
+
+
+def list_google_docs(max_results: int = 20) -> dict[str, Any]:
+    return search_google_docs(query="", max_results=max_results)
+
+
+def get_google_doc_content(document_id: str, markdown: bool = True) -> dict[str, Any]:
+    status = get_workspace_status()
+    if not status["connected"]:
+        return {"status": status, "doc": None}
+    payload, tool_name = _call_remote_tool(
+        "docs_get_markdown" if markdown else "docs_get_content",
+        {
+            "user_google_email": _workspace_user_email(),
+            "document_id": document_id,
+            "include_comments": False if markdown else None,
+        },
+    )
+    text = _extract_result_text(payload)
+    _raise_if_tool_error(text)
+    title = _extract_labeled_value(text, ["Document Title", "Title", "Name"])
+    if not title:
+        heading_match = re.search(r"(?m)^#\s+(.+)$", text)
+        if heading_match:
+            title = heading_match.group(1).strip()
+    if not title:
+        title = f"Google Doc {document_id[:8]}"
+    doc = {
+        "id": document_id,
+        "title": title,
+        "name": title,
+        "content": text,
+        "preview": text[:600],
+        "word_count": len(re.findall(r"\w+", text)),
+        "web_view_link": f"https://docs.google.com/document/d/{document_id}/edit",
+        "source": "google",
+    }
+    return {"status": status, "doc": doc, "tool": tool_name}
+
+
+def safe_search_google_docs(query: str = "", max_results: int = 20) -> dict[str, Any]:
+    try:
+        return search_google_docs(query, max_results)
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "docs": [], "error": str(exc)}
+
+
+def safe_list_google_docs(max_results: int = 20) -> dict[str, Any]:
+    try:
+        return list_google_docs(max_results)
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "docs": [], "error": str(exc)}
+
+
+def safe_get_google_doc_content(document_id: str, markdown: bool = True) -> dict[str, Any]:
+    try:
+        return get_google_doc_content(document_id, markdown=markdown)
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "doc": None, "error": str(exc)}
+
+
+drive_search_tool = FunctionTool(func=safe_search_drive_files)
+drive_list_tool = FunctionTool(func=safe_list_drive_files)
+drive_get_tool = FunctionTool(func=safe_get_drive_file_metadata)
+docs_search_tool = FunctionTool(func=safe_search_google_docs)
+docs_list_tool = FunctionTool(func=safe_list_google_docs)
+docs_get_content_tool = FunctionTool(func=safe_get_google_doc_content)
+
+
+def get_workspace_drive_tools():
+    return [drive_search_tool, drive_list_tool, drive_get_tool]
+
+
+def get_workspace_docs_tools():
+    return [docs_search_tool, docs_list_tool, docs_get_content_tool]
+
+
 def safe_list_calendar_events_today() -> dict[str, Any]:
     try:
         return list_calendar_events_today()
+    except Exception as exc:
+        return {"status": {"connected": False, "status": "error", "message": str(exc)}, "events": [], "error": str(exc)}
+
+
+def safe_list_google_calendar_events(
+    start_date: str = "",
+    end_date: str = "",
+) -> dict[str, Any]:
+    """List Google Calendar events for a date range (inclusive).
+
+    Args:
+        start_date: YYYY-MM-DD. If omitted, defaults to today.
+        end_date: YYYY-MM-DD. If omitted, defaults to start_date.
+    """
+    try:
+        start = start_date.strip() or None
+        end = end_date.strip() or None
+        return list_calendar_events(start_date=start, end_date=end)
     except Exception as exc:
         return {"status": {"connected": False, "status": "error", "message": str(exc)}, "events": [], "error": str(exc)}
 
@@ -808,6 +1197,7 @@ def safe_create_gmail_draft(
 
 
 google_calendar_today_tool = FunctionTool(func=safe_list_calendar_events_today)
+google_calendar_range_tool = FunctionTool(func=safe_list_google_calendar_events)
 google_create_event_tool = FunctionTool(func=safe_create_calendar_event)
 google_tasks_list_tool = FunctionTool(func=safe_list_google_tasks)
 google_task_create_tool = FunctionTool(func=safe_create_google_task)
@@ -818,7 +1208,7 @@ gmail_create_draft_tool = FunctionTool(func=safe_create_gmail_draft)
 
 
 def get_workspace_calendar_tools():
-    return [google_calendar_today_tool, google_create_event_tool]
+    return [google_calendar_today_tool, google_calendar_range_tool, google_create_event_tool]
 
 
 def get_workspace_task_tools():
