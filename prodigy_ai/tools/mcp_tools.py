@@ -6,7 +6,7 @@ Provides 17 SQL tools across 4 toolsets for structured data operations.
 import os
 from toolbox_core import ToolboxSyncClient
 
-TOOLBOX_URL = os.getenv("TOOLBOX_URL", "http://127.0.0.1:5000")
+TOOLBOX_URL = os.getenv("TOOLBOX_URL", "http://127.0.0.1:5050")
 
 _client = None
 

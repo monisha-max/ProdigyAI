@@ -10,6 +10,8 @@ import dotenv
 
 dotenv.load_dotenv()
 
+_google_tables_ready = False
+
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
     "port": int(os.getenv("DB_PORT", "5432")),
@@ -69,6 +71,103 @@ def _serialize(rows):
                 clean[k] = v
         result.append(clean)
     return result
+
+
+def _ensure_google_tables():
+    global _google_tables_ready
+    if _google_tables_ready:
+        return
+    conn = _conn()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS google_accounts (
+                account_email VARCHAR(255) PRIMARY KEY,
+                display_name VARCHAR(255),
+                provider VARCHAR(50) DEFAULT 'google',
+                status VARCHAR(30) DEFAULT 'connected',
+                last_synced_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS google_calendar_cache (
+                event_id VARCHAR(255) PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                event_date DATE,
+                start_time TIME,
+                end_time TIME,
+                attendees TEXT,
+                location TEXT,
+                summary TEXT,
+                source VARCHAR(30) DEFAULT 'google',
+                last_synced_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS google_tasks_cache (
+                task_id VARCHAR(255) PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                notes TEXT,
+                due_date DATE,
+                status VARCHAR(20) DEFAULT 'todo',
+                priority VARCHAR(20) DEFAULT 'medium',
+                thread_id VARCHAR(255),
+                source VARCHAR(30) DEFAULT 'google',
+                last_synced_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gmail_threads_cache (
+                thread_id VARCHAR(255) PRIMARY KEY,
+                subject VARCHAR(255) NOT NULL,
+                snippet TEXT,
+                summary TEXT,
+                sender VARCHAR(255),
+                unread_count INTEGER DEFAULT 0,
+                message_count INTEGER DEFAULT 1,
+                received_at TIMESTAMP,
+                source VARCHAR(30) DEFAULT 'google',
+                last_synced_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS google_sync_state (
+                sync_key VARCHAR(50) PRIMARY KEY,
+                status VARCHAR(30) DEFAULT 'idle',
+                last_synced_at TIMESTAMP,
+                last_error TEXT,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+            """
+        )
+        conn.commit()
+        _google_tables_ready = True
+    finally:
+        conn.close()
+
+
+def _upsert_many(sql, rows):
+    if not rows:
+        return
+    conn = _conn()
+    try:
+        cursor = conn.cursor()
+        for row in rows:
+            cursor.execute(sql, row)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ─── Task Queries ───
@@ -214,3 +313,254 @@ def simulate_day_off(target_date):
         'workload_after': workload_after,
         'moves': moves,
     }
+
+
+def cache_google_calendar_events(events):
+    _ensure_google_tables()
+    rows = [
+        [
+            event.get("id"),
+            event.get("title"),
+            event.get("event_date"),
+            event.get("start_time"),
+            event.get("end_time"),
+            event.get("attendees"),
+            event.get("location"),
+            event.get("summary"),
+            event.get("source", "google"),
+        ]
+        for event in events
+        if event.get("id")
+    ]
+    _upsert_many(
+        """
+        INSERT INTO google_calendar_cache (
+            event_id, title, event_date, start_time, end_time, attendees, location, summary, source, last_synced_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (event_id) DO UPDATE SET
+            title = EXCLUDED.title,
+            event_date = EXCLUDED.event_date,
+            start_time = EXCLUDED.start_time,
+            end_time = EXCLUDED.end_time,
+            attendees = EXCLUDED.attendees,
+            location = EXCLUDED.location,
+            summary = EXCLUDED.summary,
+            source = EXCLUDED.source,
+            last_synced_at = NOW()
+        """,
+        rows,
+    )
+
+
+def cache_google_tasks(tasks):
+    _ensure_google_tables()
+    _execute("DELETE FROM google_tasks_cache")
+    rows = [
+        [
+            task.get("id"),
+            task.get("title"),
+            task.get("notes"),
+            task.get("due_date"),
+            task.get("status", "todo"),
+            task.get("priority", "medium"),
+            task.get("thread_id"),
+            task.get("source", "google"),
+        ]
+        for task in tasks
+        if task.get("id")
+    ]
+    _upsert_many(
+        """
+        INSERT INTO google_tasks_cache (
+            task_id, title, notes, due_date, status, priority, thread_id, source, last_synced_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (task_id) DO UPDATE SET
+            title = EXCLUDED.title,
+            notes = EXCLUDED.notes,
+            due_date = EXCLUDED.due_date,
+            status = EXCLUDED.status,
+            priority = EXCLUDED.priority,
+            thread_id = EXCLUDED.thread_id,
+            source = EXCLUDED.source,
+            last_synced_at = NOW()
+        """,
+        rows,
+    )
+
+
+def cache_gmail_threads(threads):
+    _ensure_google_tables()
+    rows = [
+        [
+            thread.get("id"),
+            thread.get("subject"),
+            thread.get("snippet"),
+            thread.get("summary"),
+            thread.get("sender"),
+            thread.get("unread_count", 0),
+            thread.get("message_count", 1),
+            thread.get("received_at"),
+            thread.get("source", "google"),
+        ]
+        for thread in threads
+        if thread.get("id")
+    ]
+    _upsert_many(
+        """
+        INSERT INTO gmail_threads_cache (
+            thread_id, subject, snippet, summary, sender, unread_count, message_count, received_at, source, last_synced_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (thread_id) DO UPDATE SET
+            subject = EXCLUDED.subject,
+            snippet = EXCLUDED.snippet,
+            summary = EXCLUDED.summary,
+            sender = EXCLUDED.sender,
+            unread_count = EXCLUDED.unread_count,
+            message_count = EXCLUDED.message_count,
+            received_at = EXCLUDED.received_at,
+            source = EXCLUDED.source,
+            last_synced_at = NOW()
+        """,
+        rows,
+    )
+
+
+def record_google_sync(sync_key, status="idle", error=None):
+    _ensure_google_tables()
+    _execute(
+        """
+        INSERT INTO google_sync_state (sync_key, status, last_synced_at, last_error, updated_at)
+        VALUES (%s, %s, CASE WHEN %s = 'connected' THEN NOW() ELSE NULL END, %s, NOW())
+        ON CONFLICT (sync_key) DO UPDATE SET
+            status = EXCLUDED.status,
+            last_synced_at = CASE WHEN EXCLUDED.status = 'connected' THEN NOW() ELSE google_sync_state.last_synced_at END,
+            last_error = EXCLUDED.last_error,
+            updated_at = NOW()
+        """,
+        [sync_key, status, status, error],
+    )
+
+
+def get_google_calendar_today():
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            event_id AS id,
+            title,
+            event_date,
+            start_time,
+            end_time,
+            attendees,
+            location,
+            summary,
+            source,
+            last_synced_at
+        FROM google_calendar_cache
+        WHERE event_date = CURRENT_DATE
+        ORDER BY start_time ASC NULLS LAST, title ASC
+        """
+    )
+    return _serialize(rows)
+
+
+def get_google_calendar_range(start_date, end_date):
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            event_id AS id,
+            title,
+            event_date,
+            start_time,
+            end_time,
+            attendees,
+            location,
+            summary,
+            source,
+            last_synced_at
+        FROM google_calendar_cache
+        WHERE event_date BETWEEN %s AND %s
+        ORDER BY event_date ASC, start_time ASC NULLS LAST, title ASC
+        """,
+        [start_date, end_date],
+    )
+    return _serialize(rows)
+
+
+def get_google_tasks():
+    _ensure_google_tables()
+    rows = _query(
+        """
+        SELECT
+            task_id AS id,
+            title,
+            notes,
+            due_date,
+            status,
+            priority,
+            thread_id,
+            source,
+            last_synced_at
+        FROM google_tasks_cache
+        ORDER BY
+            CASE status WHEN 'todo' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,
+            due_date ASC NULLS LAST,
+            title ASC
+        """
+    )
+    return _serialize(rows)
+
+
+def mark_google_task_complete(task_id):
+    _ensure_google_tables()
+    return _serialize(
+        _execute(
+            """
+            UPDATE google_tasks_cache
+            SET status = 'done', last_synced_at = NOW()
+            WHERE task_id = %s
+            RETURNING task_id AS id, title, notes, due_date, status, priority, thread_id, source
+            """,
+            [task_id],
+        )
+    )
+
+
+def get_gmail_summary():
+    _ensure_google_tables()
+    rows = _serialize(
+        _query(
+            """
+            SELECT
+                thread_id AS id,
+                subject,
+                snippet,
+                summary,
+                sender,
+                unread_count,
+                message_count,
+                received_at,
+                source,
+                last_synced_at
+            FROM gmail_threads_cache
+            ORDER BY unread_count DESC, received_at DESC NULLS LAST
+            LIMIT 5
+            """
+        )
+    )
+    unread_count = sum(int(row.get("unread_count") or 0) for row in rows)
+    sync_state = _serialize(
+        _query(
+            """
+            SELECT sync_key, status, last_synced_at, last_error
+            FROM google_sync_state
+            WHERE sync_key = 'workspace'
+            """
+        )
+    )
+    status = sync_state[0] if sync_state else {"status": "idle", "last_error": None, "last_synced_at": None}
+    return {"threads": rows, "unread_count": unread_count, "status": status}

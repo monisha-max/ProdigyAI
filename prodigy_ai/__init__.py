@@ -1,1 +1,1 @@
-from . import agent
+"""ProdigyAI package."""
