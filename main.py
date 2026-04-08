@@ -1,67 +1,324 @@
 """
-ProdigyAI — FastAPI Server
-Dashboard data: direct PostgreSQL queries (fast, reliable)
-Chat: ADK multi-agent system (Gemini + MCP Toolbox + Maps + Python tools)
+ProdigyAI FastAPI server.
+
+Dashboard data is served from PostgreSQL. Chat uses ADK agents. Google
+Workspace data is synced through a community MCP server wrapped by an internal
+adapter and cached locally for the UI.
 """
 
-import os
-import json
 import uuid
-import traceback as tb
 from contextlib import asynccontextmanager
+from datetime import date, timedelta
+import re
 
 import dotenv
-dotenv.load_dotenv()
-
 from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
-
+from fastapi.staticfiles import StaticFiles
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from pydantic import BaseModel
 
-# Direct DB access for dashboard (fast, reliable)
+from prodigy_ai.agent import root_agent
 from prodigy_ai.db import (
-    get_tasks as db_get_tasks,
-    update_task as db_update_task,
-    get_events_today as db_get_events_today,
+    cache_google_docs,
+    cache_gmail_threads,
+    cache_google_calendar_events,
+    cache_google_drive_files,
+    cache_google_tasks,
     get_events_range as db_get_events_range,
+    get_events_today as db_get_events_today,
+    get_gmail_summary as db_get_gmail_summary,
+    get_google_calendar_range as db_get_google_calendar_range,
+    get_google_calendar_today as db_get_google_calendar_today,
+    get_google_docs as db_get_google_docs,
+    get_google_drive_files as db_get_google_drive_files,
+    get_google_tasks as db_get_google_tasks,
     get_notes as db_get_notes,
+    get_tasks as db_get_tasks,
     get_workload as db_get_workload,
+    mark_google_task_complete as db_mark_google_task_complete,
+    record_google_sync,
+    search_google_docs_cache as db_search_google_docs,
+    search_google_drive_files_cache as db_search_drive_files,
     simulate_day_off as db_simulate_day_off,
+    update_task as db_update_task,
+)
+from prodigy_ai.tools.google_workspace_tools import (
+    create_calendar_event,
+    create_gmail_draft,
+    create_google_task,
+    list_calendar_events,
+    get_gmail_thread_summary,
+    get_google_doc_content,
+    get_workspace_status,
+    list_calendar_events_today,
+    list_google_docs,
+    list_drive_files,
+    list_google_tasks,
+    list_priority_gmail_threads,
+    complete_google_task,
+    search_google_docs,
+    search_drive_files,
 )
 
-# Agent for chat (LLM-powered)
-from prodigy_ai.agent import root_agent
+dotenv.load_dotenv()
 
-# ─── Session Management ───
 APP_NAME = "prodigy_ai"
 USER_ID = "default_user"
 session_service = InMemorySessionService()
 runner = Runner(agent=root_agent, app_name=APP_NAME, session_service=session_service)
-
-# Track sessions: one persistent session per browser tab (via session_id param)
-# plus the ability to create fresh sessions for each chat if needed
 _sessions = set()
 
 
-async def get_or_create_session(sid: str = None) -> str:
-    """Get existing session or create new one."""
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+
+
+class TaskUpdate(BaseModel):
+    status: str | None = None
+    priority: str | None = None
+
+
+class GoogleEventCreateRequest(BaseModel):
+    title: str
+    event_date: str
+    start_time: str = "10:00"
+    end_time: str = "11:00"
+    location: str = ""
+    attendees: str = ""
+    description: str = ""
+    timezone: str = ""
+
+
+class GoogleTaskCreateRequest(BaseModel):
+    title: str
+    notes: str = ""
+    due_date: str = ""
+    priority: str = "medium"
+    thread_id: str = ""
+
+
+class GmailTaskRequest(BaseModel):
+    thread_id: str
+    title: str | None = None
+    notes: str = ""
+    due_date: str = ""
+    priority: str = "medium"
+
+
+class GmailDraftRequest(BaseModel):
+    thread_id: str
+    to: str = ""
+    subject: str = ""
+    body: str = ""
+
+
+async def get_or_create_session(sid: str | None = None) -> str:
     if sid and sid in _sessions:
         return sid
     new_id = sid or str(uuid.uuid4())
-    await session_service.create_session(
-        app_name=APP_NAME, user_id=USER_ID, session_id=new_id,
-    )
+    await session_service.create_session(app_name=APP_NAME, user_id=USER_ID, session_id=new_id)
     _sessions.add(new_id)
     return new_id
 
 
+def _status_payload():
+    status = get_workspace_status()
+    return {
+        "connected": status.get("connected", False),
+        "state": status.get("status", "disconnected"),
+        "message": status.get("message", ""),
+    }
+
+
+def _sync_google_workspace():
+    status = get_workspace_status()
+    if not status.get("connected"):
+        record_google_sync("workspace", status=status.get("status", "disconnected"), error=status.get("message"))
+        return {
+            "status": _status_payload(),
+            "calendar_events": 0,
+            "tasks": 0,
+            "threads": 0,
+            "drive_files": 0,
+            "docs_files": 0,
+        }
+
+    today = date.today()
+    end = today + timedelta(days=6)
+    calendar = {"events": []}
+    tasks = {"tasks": []}
+    gmail = {"threads": []}
+    errors = []
+
+    try:
+        calendar = list_calendar_events(start_date=today.isoformat(), end_date=end.isoformat())
+        cache_google_calendar_events(calendar.get("events", []))
+    except Exception as exc:
+        errors.append(f"calendar: {exc}")
+
+    try:
+        tasks = list_google_tasks()
+        cache_google_tasks(tasks.get("tasks", []))
+    except Exception as exc:
+        errors.append(f"tasks: {exc}")
+
+    try:
+        gmail = list_priority_gmail_threads()
+        cache_gmail_threads(gmail.get("threads", []))
+    except Exception as exc:
+        errors.append(f"gmail: {exc}")
+
+    drive = {"files": []}
+    try:
+        drive = list_drive_files(max_results=20)
+        cache_google_drive_files(drive.get("files", []))
+    except Exception as exc:
+        errors.append(f"drive: {exc}")
+
+    docs = {"docs": []}
+    try:
+        docs = list_google_docs(max_results=20)
+        cache_google_docs(docs.get("docs", []))
+    except Exception as exc:
+        errors.append(f"docs: {exc}")
+
+    record_google_sync("workspace", status="connected" if not errors else "partial", error="; ".join(errors) or None)
+
+    return {
+        "status": _status_payload(),
+        "calendar_events": len(calendar.get("events", [])),
+        "tasks": len(tasks.get("tasks", [])),
+        "threads": len(gmail.get("threads", [])),
+        "drive_files": len(drive.get("files", [])),
+        "docs_files": len(docs.get("docs", [])),
+        "warnings": errors,
+    }
+
+
+def _calendar_query_dates(message: str) -> tuple[str, str] | None:
+    lower = message.lower()
+    today = date.today()
+
+    if "tomorrow" in lower:
+        d = today + timedelta(days=1)
+        value = d.isoformat()
+        return value, value
+
+    if "today" in lower:
+        value = today.isoformat()
+        return value, value
+
+    dates = re.findall(r"\b\d{4}-\d{2}-\d{2}\b", lower)
+    if len(dates) >= 2:
+        return dates[0], dates[1]
+    if len(dates) == 1:
+        return dates[0], dates[0]
+    return None
+
+
+def _is_calendar_read_query(message: str) -> bool:
+    lower = message.lower()
+    has_calendar_topic = any(
+        token in lower
+        for token in [
+            "meeting",
+            "meetings",
+            "calendar",
+            "schedule",
+            "scheduled",
+            "event",
+            "events",
+        ]
+    )
+    if not has_calendar_topic:
+        return False
+
+    has_create_intent = any(
+        token in lower
+        for token in [
+            "create",
+            "add ",
+            "book ",
+            "set up",
+            "reschedule",
+            "move ",
+            "cancel ",
+            "delete ",
+        ]
+    )
+    if has_create_intent:
+        return False
+
+    has_read_intent = any(
+        token in lower
+        for token in [
+            "what",
+            "show",
+            "list",
+            "do i have",
+            "any ",
+            "my calendar",
+            "my meetings",
+        ]
+    )
+    if not has_read_intent:
+        return False
+
+    return bool(_calendar_query_dates(message))
+
+
+def _format_calendar_window(start_date: str, end_date: str) -> str:
+    if start_date == end_date:
+        return start_date
+    return f"{start_date} to {end_date}"
+
+
+def _direct_google_calendar_reply(message: str) -> dict | None:
+    if not _is_calendar_read_query(message):
+        return None
+
+    date_window = _calendar_query_dates(message)
+    if not date_window:
+        return None
+    start_date, end_date = date_window
+
+    try:
+        result = list_calendar_events(start_date=start_date, end_date=end_date)
+    except Exception:
+        return None
+
+    events = result.get("events", []) if isinstance(result, dict) else []
+    window = _format_calendar_window(start_date, end_date)
+    if not events:
+        return {
+            "response": f"I don't see any meetings scheduled for {window}.",
+            "agents": ["calendar_direct"],
+            "tools": ["safe_list_google_calendar_events"],
+        }
+
+    sorted_events = sorted(events, key=lambda item: ((item.get("event_date") or ""), (item.get("start_time") or "")))
+    lines = [f"I found {len(sorted_events)} meeting(s) for {window}:"]
+    for item in sorted_events[:12]:
+        event_date = item.get("event_date") or start_date
+        start_time = item.get("start_time") or "all day"
+        title = item.get("title") or "Untitled event"
+        location = item.get("location") or ""
+        tail = f" ({location})" if location else ""
+        lines.append(f"- {event_date} {start_time} - {title}{tail}")
+
+    return {
+        "response": "\n".join(lines),
+        "agents": ["calendar_direct"],
+        "tools": ["safe_list_google_calendar_events"],
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create a default session on startup
     default_id = await get_or_create_session("default")
     print(f"ProdigyAI default session: {default_id}")
     yield
@@ -70,20 +327,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ProdigyAI", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
-# ─── Models ───
-class ChatRequest(BaseModel):
-    message: str
-    session_id: str | None = None  # Optional: reuse session for conversation continuity
-
-class TaskUpdate(BaseModel):
-    status: str | None = None
-    priority: str | None = None
-
-
-# ═══════════════════════════════════════
-# DASHBOARD API — Direct DB (instant)
-# ═══════════════════════════════════════
 
 @app.get("/")
 async def serve_dashboard():
@@ -94,8 +337,8 @@ async def serve_dashboard():
 async def api_get_tasks(status: str = "all"):
     try:
         return JSONResponse(content=db_get_tasks(status))
-    except Exception as e:
-        print(f"DB error (tasks): {e}")
+    except Exception as exc:
+        print(f"DB error (tasks): {exc}")
         return JSONResponse(content=[])
 
 
@@ -104,16 +347,16 @@ async def api_update_task(task_id: int, update: TaskUpdate):
     try:
         result = db_update_task(task_id, status=update.status, priority=update.priority)
         return {"success": True, "result": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/events/today")
 async def api_get_events_today():
     try:
         return JSONResponse(content=db_get_events_today())
-    except Exception as e:
-        print(f"DB error (events): {e}")
+    except Exception as exc:
+        print(f"DB error (events): {exc}")
         return JSONResponse(content=[])
 
 
@@ -121,8 +364,8 @@ async def api_get_events_today():
 async def api_get_events_range(start: str, end: str):
     try:
         return JSONResponse(content=db_get_events_range(start, end))
-    except Exception as e:
-        print(f"DB error (events range): {e}")
+    except Exception as exc:
+        print(f"DB error (events range): {exc}")
         return JSONResponse(content=[])
 
 
@@ -130,8 +373,8 @@ async def api_get_events_range(start: str, end: str):
 async def api_get_notes():
     try:
         return JSONResponse(content=db_get_notes())
-    except Exception as e:
-        print(f"DB error (notes): {e}")
+    except Exception as exc:
+        print(f"DB error (notes): {exc}")
         return JSONResponse(content=[])
 
 
@@ -139,28 +382,236 @@ async def api_get_notes():
 async def api_get_workload():
     try:
         return JSONResponse(content=db_get_workload())
-    except Exception as e:
-        print(f"DB error (workload): {e}")
+    except Exception as exc:
+        print(f"DB error (workload): {exc}")
         return JSONResponse(content=[])
 
 
 @app.get("/api/simulate/{date}")
 async def api_simulate(date: str):
-    """Time Machine: get structured before/after simulation data for a date."""
     try:
         return JSONResponse(content=db_simulate_day_off(date))
-    except Exception as e:
-        print(f"Simulation error: {e}")
-        return JSONResponse(content={"error": str(e)})
+    except Exception as exc:
+        print(f"Simulation error: {exc}")
+        return JSONResponse(content={"error": str(exc)})
 
 
-# ═══════════════════════════════════════
-# CHAT API — ADK Agents (LLM-powered)
-# ═══════════════════════════════════════
+@app.get("/api/google/status")
+async def api_google_status():
+    return JSONResponse(content=_status_payload())
+
+
+@app.post("/api/google/sync")
+async def api_google_sync():
+    try:
+        return JSONResponse(content=_sync_google_workspace())
+    except Exception as exc:
+        record_google_sync("workspace", status="error", error=str(exc))
+        return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/calendar/today")
+async def api_google_calendar_today():
+    try:
+        today = date.today().isoformat()
+        calendar = list_calendar_events(start_date=today, end_date=today)
+        if calendar.get("events"):
+            cache_google_calendar_events(calendar.get("events", []))
+        return JSONResponse(content={"status": _status_payload(), "events": db_get_google_calendar_today()})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "events": [], "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/calendar/range")
+async def api_google_calendar_range(start: str, end: str):
+    try:
+        calendar = list_calendar_events(start_date=start, end_date=end)
+        if calendar.get("events"):
+            cache_google_calendar_events(calendar.get("events", []))
+        return JSONResponse(content={"status": _status_payload(), "events": db_get_google_calendar_range(start, end)})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "events": [], "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/google/calendar/events")
+async def api_google_create_calendar_event(request: GoogleEventCreateRequest):
+    try:
+        result = create_calendar_event(
+            title=request.title,
+            event_date=request.event_date,
+            start_time=request.start_time,
+            end_time=request.end_time,
+            location=request.location,
+            attendees=request.attendees,
+            description=request.description,
+            timezone=request.timezone,
+        )
+        event = result.get("event")
+        if event:
+            cache_google_calendar_events([event])
+        refreshed = list_calendar_events(start_date=request.event_date, end_date=request.event_date)
+        refreshed_events = refreshed.get("events", [])
+        if refreshed_events:
+            cache_google_calendar_events(refreshed_events)
+            matching = next((item for item in refreshed_events if item.get("title") == request.title), refreshed_events[0])
+            result["event"] = matching
+        result["events_for_day"] = refreshed_events
+        return JSONResponse(content=result)
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/tasks")
+async def api_google_tasks():
+    try:
+        return JSONResponse(content={"status": _status_payload(), "tasks": db_get_google_tasks()})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "tasks": [], "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/google/tasks")
+async def api_google_create_task(request: GoogleTaskCreateRequest):
+    try:
+        result = create_google_task(
+            title=request.title,
+            notes=request.notes,
+            due_date=request.due_date,
+            priority=request.priority,
+            thread_id=request.thread_id,
+        )
+        task = result.get("task")
+        if task:
+            cache_google_tasks([task])
+        return JSONResponse(content=result)
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/google/tasks/{task_id}/complete")
+async def api_google_complete_task(task_id: str):
+    try:
+        result = complete_google_task(task_id)
+        if result.get("success"):
+            db_mark_google_task_complete(task_id)
+        return JSONResponse(content=result)
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/gmail/summary")
+async def api_google_gmail_summary():
+    try:
+        return JSONResponse(content=db_get_gmail_summary() | {"status": _status_payload()})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "threads": [], "unread_count": 0, "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/google/task-from-email")
+async def api_google_task_from_email(request: GmailTaskRequest):
+    try:
+        thread_result = get_gmail_thread_summary(request.thread_id)
+        thread = thread_result.get("thread") or {}
+        title = request.title or f"Follow up: {thread.get('subject', 'Email thread')}"
+        notes = request.notes or thread.get("summary") or thread.get("snippet") or ""
+        result = create_google_task(
+            title=title,
+            notes=notes,
+            due_date=request.due_date,
+            priority=request.priority,
+            thread_id=request.thread_id,
+        )
+        task = result.get("task")
+        if task:
+            cache_google_tasks([task])
+        return JSONResponse(content={"thread": thread, **result})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/drive/files")
+async def api_google_drive_files():
+    try:
+        return JSONResponse(content={"status": _status_payload(), "files": db_get_google_drive_files(limit=20)})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "files": [], "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/drive/search")
+async def api_google_drive_search(q: str = ""):
+    try:
+        if not q.strip():
+            return JSONResponse(content={"status": _status_payload(), "files": db_get_google_drive_files(limit=20), "query": ""})
+        live = search_drive_files(query=q, max_results=20)
+        files = live.get("files", [])
+        if files:
+            cache_google_drive_files(files)
+        else:
+            files = db_search_drive_files(q)
+        return JSONResponse(content={"status": _status_payload(), "files": files, "query": q})
+    except Exception as exc:
+        fallback = db_search_drive_files(q) if q.strip() else db_get_google_drive_files(limit=20)
+        return JSONResponse(content={"status": _status_payload(), "files": fallback, "query": q, "error": str(exc)})
+
+
+@app.get("/api/google/docs/files")
+async def api_google_docs_files():
+    try:
+        return JSONResponse(content={"status": _status_payload(), "docs": db_get_google_docs(limit=20)})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "docs": [], "error": str(exc)}, status_code=500)
+
+
+@app.get("/api/google/docs/search")
+async def api_google_docs_search(q: str = ""):
+    try:
+        if not q.strip():
+            return JSONResponse(content={"status": _status_payload(), "docs": db_get_google_docs(limit=20), "query": ""})
+        live = search_google_docs(query=q, max_results=20)
+        docs = live.get("docs", [])
+        if docs:
+            cache_google_docs(docs)
+        else:
+            docs = db_search_google_docs(q)
+        return JSONResponse(content={"status": _status_payload(), "docs": docs, "query": q})
+    except Exception as exc:
+        fallback = db_search_google_docs(q) if q.strip() else db_get_google_docs(limit=20)
+        return JSONResponse(content={"status": _status_payload(), "docs": fallback, "query": q, "error": str(exc)})
+
+
+@app.get("/api/google/docs/{doc_id}/content")
+async def api_google_doc_content(doc_id: str):
+    try:
+        return JSONResponse(content=get_google_doc_content(doc_id, markdown=True))
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "doc": None, "error": str(exc)}, status_code=500)
+
+
+@app.post("/api/google/draft-from-email")
+async def api_google_draft_from_email(request: GmailDraftRequest):
+    try:
+        thread_result = get_gmail_thread_summary(request.thread_id)
+        thread = thread_result.get("thread") or {}
+        subject = request.subject or f"Re: {thread.get('subject', 'Follow-up')}"
+        body = request.body or f"Hi,\n\nThanks for the note about {thread.get('subject', 'this thread')}.\n\n"
+        result = create_gmail_draft(
+            thread_id=request.thread_id,
+            to=request.to or thread.get("sender", ""),
+            subject=subject,
+            body=body,
+        )
+        return JSONResponse(content={"thread": thread, **result})
+    except Exception as exc:
+        return JSONResponse(content={"status": _status_payload(), "error": str(exc)}, status_code=500)
+
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     import asyncio
+
+    direct = _direct_google_calendar_reply(request.message)
+    if direct:
+        sid = await get_or_create_session(request.session_id or str(uuid.uuid4()))
+        return {**direct, "session_id": sid}
 
     max_retries = 2
     for attempt in range(max_retries + 1):
@@ -173,14 +624,14 @@ async def chat(request: ChatRequest):
                 "tools": tools_called,
                 "session_id": sid,
             }
-        except Exception as e:
-            error_str = str(e).lower()
+        except Exception as exc:
+            error_str = str(exc).lower()
             if ("429" in error_str or "resource_exhausted" in error_str) and attempt < max_retries:
                 wait = (attempt + 1) * 3
-                print(f"Rate limited (attempt {attempt+1}), retrying in {wait}s...")
+                print(f"Rate limited (attempt {attempt + 1}), retrying in {wait}s...")
                 await asyncio.sleep(wait)
                 continue
-            print(f"Chat error: {e}")
+            print(f"Chat error: {exc}")
             return {
                 "response": "I encountered a temporary issue. Please try again in a moment.",
                 "agents": [],
@@ -189,56 +640,46 @@ async def chat(request: ChatRequest):
 
 
 async def run_agent_with_trace(query: str, session_id: str = "default") -> tuple[str, list[str], list[str]]:
-    content = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=query)]
-    )
+    content = types.Content(role="user", parts=[types.Part.from_text(text=query)])
 
     final_response = ""
     agents_used = set()
     tools_called = []
+    last_text = ""
 
-    last_text = ""  # Track last text seen from any event, not just final
-
-    async for event in runner.run_async(
-        user_id=USER_ID,
-        session_id=session_id,
-        new_message=content,
-    ):
+    async for event in runner.run_async(user_id=USER_ID, session_id=session_id, new_message=content):
         try:
-            if hasattr(event, 'author') and event.author:
+            if hasattr(event, "author") and event.author:
                 agents_used.add(event.author)
 
-            if hasattr(event, 'content') and event.content:
-                parts = getattr(event.content, 'parts', None)
+            if hasattr(event, "content") and event.content:
+                parts = getattr(event.content, "parts", None)
                 if parts:
                     try:
                         for part in parts:
-                            fc = getattr(part, 'function_call', None)
+                            fc = getattr(part, "function_call", None)
                             if fc:
-                                name = getattr(fc, 'name', None)
+                                name = getattr(fc, "name", None)
                                 if name:
                                     tools_called.append(name)
-                            # Capture text from ALL events, not just final
-                            if hasattr(part, 'text') and part.text:
+                            if hasattr(part, "text") and part.text:
                                 last_text = part.text
                     except TypeError:
                         pass
 
             if event.is_final_response():
-                if hasattr(event, 'content') and event.content:
-                    parts = getattr(event.content, 'parts', None)
+                if hasattr(event, "content") and event.content:
+                    parts = getattr(event.content, "parts", None)
                     if parts:
                         try:
                             for part in parts:
-                                if hasattr(part, 'text') and part.text:
+                                if hasattr(part, "text") and part.text:
                                     final_response += part.text
                         except TypeError:
                             pass
-        except Exception as e:
-            print(f"Event processing error: {e}")
+        except Exception as exc:
+            print(f"Event processing error: {exc}")
 
-    # If final response is empty but we captured text from intermediate events, use that
     if not final_response and last_text:
         final_response = last_text
 
@@ -247,4 +688,5 @@ async def run_agent_with_trace(query: str, session_id: str = "default") -> tuple
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8080)
