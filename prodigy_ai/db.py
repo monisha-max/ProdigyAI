@@ -182,27 +182,39 @@ def simulate_day_off(target_date):
             d['tasks'] = 0
             d['events'] = 0
 
-    next_wd = target + timedelta(days=1)
-    while next_wd.weekday() >= 5:
-        next_wd += timedelta(days=1)
-    prev_wd = target - timedelta(days=1)
-    while prev_wd.weekday() >= 5:
-        prev_wd -= timedelta(days=1)
+    # Find neighboring weekdays WITHIN the visible week range
+    visible_dates = {d['date'] for d in workload_after}
+
+    def find_dest(from_date, direction):
+        """Find next/prev weekday that's within the visible week."""
+        d = from_date + timedelta(days=direction)
+        for _ in range(10):
+            if d.weekday() < 5 and d.isoformat() in visible_dates:
+                return d
+            d += timedelta(days=direction)
+        # Fallback: closest weekday even if outside range
+        d = from_date + timedelta(days=direction)
+        while d.weekday() >= 5:
+            d += timedelta(days=direction)
+        return d
+
+    next_wd = find_dest(target, 1)
+    prev_wd = find_dest(target, -1)
 
     moves = []
     for t in affected_tasks:
         is_high = t.get('priority') in ('urgent', 'high')
-        dest = prev_wd.isoformat() if is_high else next_wd.isoformat()
-        moves.append({'type': 'task', 'id': t['id'], 'title': t['title'], 'priority': t.get('priority', 'medium'), 'from_date': target_date, 'to_date': dest})
+        dest = prev_wd if is_high else next_wd
+        moves.append({'type': 'task', 'id': t['id'], 'title': t['title'], 'priority': t.get('priority', 'medium'), 'from_date': target_date, 'to_date': dest.isoformat()})
         for d in workload_after:
-            if d['date'] == dest:
+            if d['date'] == dest.isoformat():
                 d['tasks'] += 1
 
     for ev in affected_events:
-        dest = next_wd.isoformat()
-        moves.append({'type': 'event', 'id': ev['id'], 'title': ev['title'], 'priority': 'event', 'from_date': target_date, 'to_date': dest})
+        dest = next_wd
+        moves.append({'type': 'event', 'id': ev['id'], 'title': ev['title'], 'priority': 'event', 'from_date': target_date, 'to_date': dest.isoformat()})
         for d in workload_after:
-            if d['date'] == dest:
+            if d['date'] == dest.isoformat():
                 d['events'] += 1
 
     return {

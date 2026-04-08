@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProdigyAI — Architecture Diagram</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0a14;
+            color: #EEEEF5;
+            padding: 40px;
+        }
+        .diagram { max-width: 1200px; margin: 0 auto; }
+        .diagram-title { text-align: center; margin-bottom: 28px; }
+        .diagram-title h1 {
+            font-size: 26px; font-weight: 800;
+            background: linear-gradient(135deg, #6C5CE7, #A29BFE);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .diagram-title p { color: #9898B8; font-size: 13px; margin-top: 4px; }
+
+        .layer {
+            border: 1px solid rgba(108,92,231,0.15);
+            border-radius: 14px; padding: 18px 16px;
+            margin-bottom: 12px; position: relative;
+            background: rgba(18,18,45,0.3);
+        }
+        .layer-label {
+            position: absolute; top: -10px; left: 20px;
+            background: #0a0a14; padding: 0 10px;
+            font-size: 10px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 1.5px;
+        }
+        .layer-content {
+            display: flex; gap: 10px; flex-wrap: wrap;
+            justify-content: center; align-items: stretch;
+        }
+        .box {
+            background: rgba(22,22,58,0.7);
+            border: 1px solid rgba(108,92,231,0.15);
+            border-radius: 10px; padding: 12px 10px;
+            text-align: center; flex: 1; min-width: 120px;
+        }
+        .box-icon {
+            width: 38px; height: 38px; margin: 0 auto 8px;
+            border-radius: 9px; display: flex; align-items: center; justify-content: center;
+            font-size: 20px;
+        }
+        .box h3 { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+        .box p { font-size: 9px; color: #9898B8; line-height: 1.4; }
+        .box .tech { font-size: 8px; color: #6C5CE7; font-weight: 600; margin-top: 4px; }
+
+        /* Layer colors */
+        .user-layer .layer-label { color: #74B9FF; }
+        .user-layer .box-icon { background: rgba(116,185,255,0.15); color: #74B9FF; }
+        .user-layer { border-color: rgba(116,185,255,0.15); }
+
+        .app-layer .layer-label { color: #00B894; }
+        .app-layer .box-icon { background: rgba(0,184,148,0.15); color: #00B894; }
+        .app-layer { border-color: rgba(0,184,148,0.15); }
+
+        .llm-layer .layer-label { color: #FDCB6E; }
+        .llm-layer .box-icon { background: rgba(253,203,110,0.15); color: #FDCB6E; }
+        .llm-layer { border-color: rgba(253,203,110,0.15); }
+
+        .agent-layer .layer-label { color: #A29BFE; }
+        .agent-layer .box-icon { background: rgba(108,92,231,0.15); color: #A29BFE; }
+        .agent-layer { border-color: rgba(108,92,231,0.2); }
+
+        .tool-layer .layer-label { color: #FD79A8; }
+        .tool-layer .box-icon { background: rgba(253,121,168,0.15); color: #FD79A8; }
+        .tool-layer { border-color: rgba(253,121,168,0.15); }
+
+        .data-layer .layer-label { color: #FDCB6E; }
+        .data-layer .box-icon { background: rgba(253,203,110,0.15); color: #FDCB6E; }
+        .data-layer { border-color: rgba(253,203,110,0.15); }
+
+        /* Special boxes */
+        .coordinator-box {
+            background: linear-gradient(135deg, rgba(108,92,231,0.12), rgba(162,155,254,0.06));
+            border-color: rgba(108,92,231,0.35); min-width: 180px;
+        }
+        .coordinator-box .box-icon {
+            background: linear-gradient(135deg, #6C5CE7, #A29BFE);
+            color: white; width: 44px; height: 44px; font-size: 24px;
+            box-shadow: 0 3px 15px rgba(108,92,231,0.3);
+        }
+        .gemini-box {
+            background: linear-gradient(135deg, rgba(253,203,110,0.08), rgba(253,121,168,0.05));
+            border-color: rgba(253,203,110,0.3);
+        }
+        .gemini-box .box-icon {
+            background: linear-gradient(135deg, #FDCB6E, #FD79A8);
+            color: white;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-block; font-size: 7px; font-weight: 700;
+            padding: 2px 5px; border-radius: 3px; margin-top: 3px; margin-right: 2px;
+            letter-spacing: 0.3px;
+        }
+        .mcp-badge { background: rgba(108,92,231,0.12); color: #A29BFE; }
+        .api-badge { background: rgba(0,184,148,0.12); color: #00B894; }
+        .fn-badge { background: rgba(253,203,110,0.12); color: #FDCB6E; }
+        .parallel-badge { background: rgba(253,121,168,0.12); color: #FD79A8; }
+
+        /* Arrows */
+        .arrow-row { display: flex; justify-content: center; padding: 5px 0; }
+        .arrow { color: rgba(108,92,231,0.3); display: flex; flex-direction: column; align-items: center; }
+        .arrow .material-icons-round { font-size: 22px; }
+        .arrow-label { font-size: 8px; color: #5E5E80; font-weight: 500; }
+
+        /* Sub-agents row */
+        .sub-agents { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+        .sub-agent-box {
+            background: rgba(22,22,58,0.5);
+            border: 1px solid rgba(108,92,231,0.12);
+            border-radius: 8px; padding: 10px 12px;
+            text-align: center; flex: 1;
+        }
+        .sub-agent-box h4 { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+        .sub-agent-box p { font-size: 8px; color: #9898B8; }
+
+        /* Parallel box */
+        .parallel-box {
+            background: rgba(253,121,168,0.04);
+            border: 1px dashed rgba(253,121,168,0.25);
+            border-radius: 8px; padding: 10px; max-width: 500px;
+            margin: 8px auto 0; text-align: center;
+        }
+        .parallel-box h4 { font-size: 10px; font-weight: 700; color: #FD79A8; margin-bottom: 2px; }
+        .parallel-box p { font-size: 8px; color: #9898B8; }
+    </style>
+</head>
+<body>
+    <div class="diagram">
+        <div class="diagram-title">
+            <h1>ProdigyAI — System Architecture</h1>
+            <p>6 Agents | 3 MCP Connections | 8 Google Services | 25+ Tools</p>
+        </div>
+
+        <!-- USER INTERFACE LAYER -->
+        <div class="layer user-layer">
+            <div class="layer-label">User Interface Layer</div>
+            <div class="layer-content">
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">space_dashboard</span></div>
+                    <h3>Dashboard</h3>
+                    <p>Command Center, Kanban, Calendar, Notes, Agent Network Visualizer</p>
+                    <div class="tech">HTML/JS/CSS + Chart.js</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">chat</span></div>
+                    <h3>Chat Panel</h3>
+                    <p>NL input, agent pipeline stream, markdown responses, quick actions</p>
+                    <div class="tech">Marked.js</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">mic</span></div>
+                    <h3>Voice I/O</h3>
+                    <p>Speech-to-text input, text-to-speech output</p>
+                    <div class="tech">Web Speech API (Browser)</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">science</span></div>
+                    <h3>Time Machine</h3>
+                    <p>Visual what-if simulator, before/after split-screen, one-click execute</p>
+                    <div class="tech">Custom Visualization</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">hub</span></div>
+                    <h3>Agent Network</h3>
+                    <p>Live orchestration graph, animated data packets, real-time status</p>
+                    <div class="tech">CSS Animations</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-row"><div class="arrow"><span class="material-icons-round">keyboard_double_arrow_down</span><span class="arrow-label">HTTP / REST / WebSocket</span></div></div>
+
+        <!-- APPLICATION LAYER -->
+        <div class="layer app-layer">
+            <div class="layer-label">Application Layer</div>
+            <div class="layer-content">
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">api</span></div>
+                    <h3>FastAPI Server</h3>
+                    <p>Async API, static files, agent tracing, session management</p>
+                    <div class="tech">Python 3.12 + Uvicorn · Port 8080</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">speed</span></div>
+                    <h3>Direct DB Access</h3>
+                    <p>Dashboard data instant from PostgreSQL — no LLM latency</p>
+                    <div class="tech">pg8000 · &lt;200ms</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">autorenew</span></div>
+                    <h3>ADK Runner</h3>
+                    <p>Session management, agent execution, event streaming, tool tracing</p>
+                    <div class="tech">Google ADK v1.28.0</div>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">cloud</span></div>
+                    <h3>Cloud Run</h3>
+                    <p>Serverless container, auto-scale, MCP Toolbox sidecar</p>
+                    <div class="tech">Docker + VPC Connector</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-row"><div class="arrow"><span class="material-icons-round">keyboard_double_arrow_down</span><span class="arrow-label">ADK Agent Orchestration</span></div></div>
+
+        <!-- LLM LAYER -->
+        <div class="layer llm-layer">
+            <div class="layer-label">LLM Layer (Vertex AI)</div>
+            <div class="layer-content">
+                <div class="box gemini-box" style="max-width: 400px">
+                    <div class="box-icon"><span class="material-icons-round">auto_awesome</span></div>
+                    <h3>Gemini 2.5 Flash</h3>
+                    <p>Intent analysis, tool selection from 25+ tools, response generation, multi-turn reasoning. Sub-second latency. All agents share this model.</p>
+                    <div class="tech">Vertex AI · us-central1 · ~$0.02/conversation</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-row"><div class="arrow"><span class="material-icons-round">keyboard_double_arrow_down</span><span class="arrow-label">LlmAgent + sub_agents + ParallelAgent</span></div></div>
+
+        <!-- AGENT ORCHESTRATION LAYER -->
+        <div class="layer agent-layer">
+            <div class="layer-label">Agent Orchestration Layer (Google ADK)</div>
+            <div class="layer-content" style="flex-direction:column;align-items:center">
+                <div class="box coordinator-box" style="max-width:380px">
+                    <div class="box-icon"><span class="material-icons-round">psychology</span></div>
+                    <h3>Coordinator Agent (Chief of Staff)</h3>
+                    <p>Has ALL 25+ tools directly for simple queries. Routes to sub-agents for complex multi-step workflows. Synthesizes multi-agent responses.</p>
+                    <div class="tech">LlmAgent · Gemini 2.5 Flash</div>
+                </div>
+
+                <div class="sub-agents">
+                    <div class="sub-agent-box">
+                        <h4>TaskOps</h4>
+                        <p>CRUD tasks, priority management, overdue detection</p>
+                        <span class="badge mcp-badge">MCP TOOLBOX</span>
+                        <span class="badge mcp-badge">WORKSPACE MCP</span>
+                    </div>
+                    <div class="sub-agent-box">
+                        <h4>CalendarOps</h4>
+                        <p>Events, conflicts, venues, free slots, directions</p>
+                        <span class="badge mcp-badge">MCP TOOLBOX</span>
+                        <span class="badge mcp-badge">WORKSPACE MCP</span>
+                        <span class="badge api-badge">MAPS API</span>
+                        <span class="badge fn-badge">PYTHON</span>
+                    </div>
+                    <div class="sub-agent-box">
+                        <h4>KnowledgeBase</h4>
+                        <p>Notes, research, knowledge via Gemini + Google services</p>
+                        <span class="badge mcp-badge">MCP TOOLBOX</span>
+                        <span class="badge mcp-badge">WORKSPACE MCP</span>
+                    </div>
+                    <div class="sub-agent-box">
+                        <h4>Insights</h4>
+                        <p>Briefings, reports, what-if simulation, workload analysis</p>
+                        <span class="badge mcp-badge">MCP TOOLBOX</span>
+                        <span class="badge fn-badge">PYTHON</span>
+                    </div>
+                </div>
+
+                <div class="parallel-box">
+                    <h4>ParallelAgent: prepare_workflow</h4>
+                    <p>prep_calendar + prep_tasks + prep_research — run simultaneously for "Prepare for [event]" requests</p>
+                    <span class="badge parallel-badge">PARALLEL EXECUTION — 3 AGENTS AT ONCE</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-row"><div class="arrow"><span class="material-icons-round">keyboard_double_arrow_down</span><span class="arrow-label">MCP Protocol + REST API + ADK FunctionTool</span></div></div>
+
+        <!-- TOOL & INTEGRATION LAYER -->
+        <div class="layer tool-layer">
+            <div class="layer-label">Tool & Integration Layer (3 MCP Connections + APIs + Python)</div>
+            <div class="layer-content">
+                <div class="box" style="border-color:rgba(108,92,231,0.25)">
+                    <div class="box-icon" style="background:rgba(108,92,231,0.15);color:#A29BFE"><span class="material-icons-round">storage</span></div>
+                    <h3>MCP Toolbox for Databases</h3>
+                    <p>19 parameterized SQL tools across 4 toolsets</p>
+                    <span class="badge mcp-badge">MCP CONNECTION 1</span>
+                    <div class="tech">v0.23.0 · localhost:5050</div>
+                </div>
+                <div class="box" style="border-color:rgba(0,184,148,0.25)">
+                    <div class="box-icon" style="background:rgba(0,184,148,0.15);color:#00B894"><span class="material-icons-round">work</span></div>
+                    <h3>Google Workspace MCP Server</h3>
+                    <p>Calendar, Gmail, Tasks, Drive, Docs, Meet, Chat, Keep — 100+ tools</p>
+                    <span class="badge mcp-badge">MCP CONNECTION 2</span>
+                    <div class="tech">OAuth 2.1 · 8 Google Services</div>
+                </div>
+                <div class="box" style="border-color:rgba(116,185,255,0.25)">
+                    <div class="box-icon" style="background:rgba(116,185,255,0.15);color:#74B9FF"><span class="material-icons-round">map</span></div>
+                    <h3>Google Maps Platform</h3>
+                    <p>Places API (New) — venue search with ratings. Directions API — travel time.</p>
+                    <span class="badge api-badge">REST API</span>
+                    <div class="tech">API Key · places.googleapis.com</div>
+                </div>
+                <div class="box" style="border-color:rgba(253,203,110,0.25)">
+                    <div class="box-icon" style="background:rgba(253,203,110,0.15);color:#FDCB6E"><span class="material-icons-round">code</span></div>
+                    <h3>Custom Python Tools</h3>
+                    <p>calculate_free_slots, smart_reschedule, generate_report, send_email_draft</p>
+                    <span class="badge fn-badge">ADK FUNCTIONTOOL</span>
+                    <div class="tech">Pure Python · 4 tools</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-row"><div class="arrow"><span class="material-icons-round">keyboard_double_arrow_down</span><span class="arrow-label">SQL / OAuth 2.1 / API Key / HTTPS</span></div></div>
+
+        <!-- DATA & SERVICES LAYER -->
+        <div class="layer data-layer">
+            <div class="layer-label">Data & Google Services Layer (12 Services)</div>
+            <div class="layer-content">
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">database</span></div>
+                    <h3>Cloud SQL</h3>
+                    <p>PostgreSQL 15 — tasks, events, notes, projects</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">calendar_month</span></div>
+                    <h3>Google Calendar</h3>
+                    <p>Real events, availability, room booking</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">email</span></div>
+                    <h3>Gmail</h3>
+                    <p>Send invites, follow-ups, status updates</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">task_alt</span></div>
+                    <h3>Google Tasks</h3>
+                    <p>Sync tasks</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">folder</span></div>
+                    <h3>Drive</h3>
+                    <p>File storage</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">description</span></div>
+                    <h3>Docs</h3>
+                    <p>Agendas, reports</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">videocam</span></div>
+                    <h3>Meet</h3>
+                    <p>Meeting links</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">forum</span></div>
+                    <h3>Chat</h3>
+                    <p>Team messaging</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">sticky_note_2</span></div>
+                    <h3>Keep</h3>
+                    <p>Quick notes</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">place</span></div>
+                    <h3>Maps</h3>
+                    <p>Places, routes</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">auto_awesome</span></div>
+                    <h3>Vertex AI</h3>
+                    <p>Gemini 2.5 Flash</p>
+                </div>
+                <div class="box">
+                    <div class="box-icon"><span class="material-icons-round">cloud</span></div>
+                    <h3>Cloud Run</h3>
+                    <p>Deployment</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

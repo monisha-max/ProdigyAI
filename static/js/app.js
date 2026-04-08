@@ -869,7 +869,7 @@ async function sendMessage() {
             // Auto-trigger Time Machine for what-if queries
             const msgLower = text.toLowerCase();
             if (msgLower.includes('what if') || msgLower.includes('day off') || msgLower.includes('take off') || msgLower.includes('simulate')) {
-                // Extract date from the query or use today
+                // Extract date from the query
                 const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
                 let simDate;
                 if (dateMatch) {
@@ -879,14 +879,22 @@ async function sendMessage() {
                 } else if (msgLower.includes('tomorrow')) {
                     const d = new Date(); d.setDate(d.getDate()+1);
                     simDate = d.toISOString().split('T')[0];
-                } else if (msgLower.includes('friday')) {
-                    const d = new Date(); const diff = 5 - d.getDay(); d.setDate(d.getDate() + (diff <= 0 ? diff + 7 : diff));
-                    simDate = d.toISOString().split('T')[0];
-                } else if (msgLower.includes('monday')) {
-                    const d = new Date(); const diff = 1 - d.getDay(); d.setDate(d.getDate() + (diff <= 0 ? diff + 7 : diff));
-                    simDate = d.toISOString().split('T')[0];
                 } else {
-                    simDate = new Date().toISOString().split('T')[0];
+                    // Match any day name
+                    const dayMap = {sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6};
+                    let found = false;
+                    for (const [name, targetDay] of Object.entries(dayMap)) {
+                        if (msgLower.includes(name)) {
+                            const d = new Date();
+                            let diff = targetDay - d.getDay();
+                            if (diff <= 0) diff += 7; // always go to NEXT occurrence
+                            d.setDate(d.getDate() + diff);
+                            simDate = d.toISOString().split('T')[0];
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) simDate = new Date().toISOString().split('T')[0];
                 }
                 // Switch to command center and show Time Machine
                 switchView('command');
