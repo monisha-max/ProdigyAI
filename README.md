@@ -1,422 +1,271 @@
 # ProdigyAI
 
-ProdigyAI is a FastAPI-based AI chief-of-staff dashboard that combines:
+**A multi-agent AI system that acts as your Chief of Staff, orchestrating tasks, schedules, emails, notes, and knowledge across your entire Google Workspace through a single conversation.**
 
-- local tasks, events, notes, and insights from PostgreSQL
-- Google Workspace data through a community MCP server
-- Google Calendar scheduling
-- Google Tasks management
-- Gmail inbox triage and draft creation
-- MCP Toolbox-backed database tools
-- Vertex AI / Gemini chat orchestration
+Built with Google ADK, MCP Toolbox for Databases, Google Workspace MCP, and Gemini 2.5 Flash.
 
-This README is a full startup guide for local development on Windows, including:
+Live Demo: https://prodigy-ai-577370621769.us-central1.run.app
 
-- which Google APIs to enable
-- how to configure OAuth
-- how to start the Google Workspace MCP server
-- how to start MCP Toolbox
-- how to run ProdigyAI
-- how to test Calendar, Tasks, and Gmail
+---
+
+## What It Does
+
+ProdigyAI coordinates six specialized AI agents across three MCP connections and eight Google services to handle complex productivity workflows. One sentence like "Prepare for my investor pitch next Thursday" triggers parallel execution across Calendar, Tasks, Gmail, Maps, and Notes simultaneously.
+
+The system is proactive, not reactive. It analyzes your day before you ask, detects conflicts and overdue items, and generates strategic recommendations with one-click execution.
+
+### Key Features
+
+- **6 AI Agents** with a Coordinator (Chief of Staff) routing to TaskOps, CalendarOps, KnowledgeBase, GmailOps, and Insights
+- **ParallelAgent** runs three agents simultaneously for complex multi-step workflows
+- **3 MCP Connections**: MCP Toolbox (19 SQL tools), Google Workspace MCP (Calendar, Gmail, Tasks, Drive, Docs), Google Maps Platform
+- **Proactive AI Briefing** generated on app load with priorities, schedule insights, and recommendations
+- **Time Machine** visual what-if simulator with split-screen before/after comparison and one-click rescue plan execution
+- **Voice Input/Output** using browser-native Web Speech API
+- **Live Agent Network Visualizer** showing real-time orchestration with animated data flow
+- **Google Maps Integration** for venue search, directions, and travel time with real Places API data
+
+---
 
 ## Architecture
 
-ProdigyAI has three moving parts:
+```
+User (Voice/Text) --> FastAPI Server --> ADK Coordinator Agent
+                                              |
+                      +-----------------------+-----------------------+
+                      |              |              |              |
+                  TaskOps      CalendarOps    KnowledgeBase    Insights
+                      |              |              |              |
+                  MCP Toolbox   Workspace MCP   Workspace MCP   MCP Toolbox
+                  (Cloud SQL)   + Maps API      (Drive, Docs)   + Python Tools
+                      |              |              |              |
+                  PostgreSQL    Calendar        Drive           Analytics
+                  19 SQL tools  Gmail, Tasks    Docs, Keep      Reports
+```
 
-1. `Google Workspace MCP server`
-   - handles Google Calendar, Google Tasks, and Gmail access
-   - talks to Google APIs using your OAuth credentials
+### Tool Sources
 
-2. `MCP Toolbox`
-   - exposes SQL-backed tools for local tasks, events, notes, and insights
+| Source | Type | What It Provides |
+|---|---|---|
+| MCP Toolbox for Databases | Local MCP Server | 19 parameterized SQL tools across 4 toolsets for tasks, events, notes, projects |
+| Google Workspace MCP | Remote MCP Server | Google Calendar, Gmail, Tasks, Drive, Docs via OAuth 2.1 |
+| Google Maps Platform | REST API | Places API (New) for venue search, Directions API for travel time |
+| Custom Python Tools | ADK FunctionTool | Scheduling algorithms, report generation, email drafts |
 
-3. `ProdigyAI app`
-   - UI and API server
-   - reads local PostgreSQL data
-   - reads Google Workspace data through the Workspace MCP server
-   - uses Vertex AI / Gemini for chat
+### Google Services Used
 
-## Prerequisites
+Vertex AI, Cloud SQL, Cloud Run, Google Calendar, Gmail, Google Tasks, Google Drive, Google Docs, Google Meet, Google Chat, Google Keep, Google Maps Platform
 
-Install these first:
+---
 
-- Python 3.13 or similar
-- Node.js and `npx`
+## Project Structure
+
+```
+prodigy-ai/
+  prodigy_ai/
+    agent.py                   -- 6 agents + ParallelAgent workflow
+    db.py                      -- Direct PostgreSQL for dashboard (instant loads)
+    tools/
+      mcp_tools.py             -- MCP Toolbox connection (19 SQL tools)
+      google_workspace_tools.py -- Google Workspace MCP adapter
+      maps_tools.py            -- Google Maps REST API
+      custom_tools.py          -- Python scheduling/report tools
+  static/
+    index.html                 -- Dashboard with all views
+    css/style.css              -- Dark theme design system
+    js/app.js                  -- Interactivity, voice, visualizations
+  setup/
+    schema.sql                 -- PostgreSQL schema
+    setup_cloudsql.sh           -- Cloud SQL provisioning
+    deploy_cloudrun.sh          -- Cloud Run deployment
+  main.py                      -- FastAPI server with agent tracing
+  tools.yaml                   -- MCP Toolbox tool definitions (local)
+  tools-cloudrun.yaml          -- MCP Toolbox tool definitions (Cloud Run)
+  Dockerfile                   -- Container with MCP Toolbox sidecar
+  start.sh                     -- Container startup script
+```
+
+---
+
+## Local Development Setup
+
+### Prerequisites
+
+- Python 3.11+
 - PostgreSQL
-- `gcloud` CLI
-- `uv` / `uvx`
+- Google Cloud CLI (gcloud)
+- uv / uvx (for Google Workspace MCP server)
 
-Recommended Windows install commands:
+### 1. Clone and Install
 
-```powershell
-winget install Python.Python.3.13
-winget install OpenJS.NodeJS
-winget install PostgreSQL.PostgreSQL
-winget install Google.CloudSDK
-winget install --id=astral-sh.uv -e
+```bash
+git clone https://github.com/monisha-max/ProdigyAI.git
+cd ProdigyAI
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-If `uvx` is not found after install, restart PowerShell.
+### 2. Google Cloud Authentication
 
-## Google Cloud Setup
-
-Create or use a Google Cloud project for this app.
-
-### 1. Enable APIs
-
-In Google Cloud Console, enable these APIs under `APIs & Services`:
-
-- `Gmail API`
-- `Google Calendar API`
-- `Google Tasks API`
-- `Vertex AI API`
-
-Optional:
-
-- `Geocoding API`
-- `Places API`
-- `Directions API`
-
-The optional APIs are only needed if you want Google Maps features in the app.
-
-### 2. Configure OAuth Consent Screen
-
-Go to `Google Auth Platform` or `APIs & Services -> OAuth consent screen`.
-
-Use these settings for local development:
-
-- App name: `ProdigyAI Local`
-- Audience: `External`
-- Publishing status: `Testing`
-- Test user: add `pranavyeturu@gmail.com`
-
-### 3. Add Google scopes
-
-For this repo, the Workspace MCP flow needs access for:
-
-- Gmail read:
-  - `https://www.googleapis.com/auth/gmail.readonly`
-- Gmail draft / compose:
-  - `https://www.googleapis.com/auth/gmail.compose`
-- Gmail label / modify support used by the community server:
-  - `https://www.googleapis.com/auth/gmail.modify`
-  - `https://www.googleapis.com/auth/gmail.labels`
-  - `https://www.googleapis.com/auth/gmail.settings.basic`
-  - `https://www.googleapis.com/auth/gmail.send`
-- Calendar:
-  - `https://www.googleapis.com/auth/calendar`
-  - `https://www.googleapis.com/auth/calendar.readonly`
-  - `https://www.googleapis.com/auth/calendar.events`
-- Tasks:
-  - `https://www.googleapis.com/auth/tasks`
-  - `https://www.googleapis.com/auth/tasks.readonly`
-- User identity:
-  - `openid`
-  - `https://www.googleapis.com/auth/userinfo.email`
-  - `https://www.googleapis.com/auth/userinfo.profile`
-
-### 4. Create OAuth Client
-
-Go to `APIs & Services -> Credentials`.
-
-Create:
-
-- `OAuth client ID`
-- Application type: `Desktop app`
-
-Download the OAuth JSON file.
-
-In this setup, it is expected to live outside the app repo, for example:
-
-```text
-C:\Users\Pranav Yeturu\Desktop\workspace-mcp-config\client_secret.json
-```
-
-## Vertex AI / Gemini Setup
-
-ProdigyAI chat uses Vertex AI authentication, not the Workspace MCP OAuth flow.
-
-Run:
-
-```powershell
+```bash
 gcloud auth login
 gcloud auth application-default login
-gcloud config set project adk-mcp-491312
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable aiplatform.googleapis.com sqladmin.googleapis.com places.googleapis.com
 ```
 
-Verify ADC works:
+### 3. Database Setup
 
-```powershell
-gcloud auth application-default print-access-token
+```bash
+createdb prodigyai
+psql -d prodigyai < setup/schema.sql
 ```
 
-If this fails or hangs, `/api/chat` will fail even if Calendar / Tasks / Gmail are working.
+### 4. Environment Configuration
 
-## Environment Configuration
+Copy `.env.example` to `.env` and fill in your values:
 
-Create or update `C:\Users\Pranav Yeturu\Desktop\ProdigyAI\.env`.
-
-Example:
-
-```env
+```
 GOOGLE_GENAI_USE_VERTEXAI=1
-GOOGLE_CLOUD_PROJECT=adk-mcp-491312
+GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=us-central1
-
 TOOLBOX_URL=http://127.0.0.1:5050
-
 MAPS_API_KEY=your-maps-api-key
-
-DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_NAME=prodigyai
-DB_USER=apple
-DB_PASSWORD=prodigyai123
-
 GOOGLE_WORKSPACE_MCP_ENABLED=true
 GOOGLE_WORKSPACE_MCP_URL=http://127.0.0.1:8000/mcp
-GOOGLE_WORKSPACE_MCP_TIMEOUT=12
-
-GOOGLE_WORKSPACE_USER_EMAIL=pranavyeturu@gmail.com
-GOOGLE_WORKSPACE_TASK_LIST_ID=MDcyNjA4MjIxMTg1NDg1Mjg4Njk6MDow
+GOOGLE_WORKSPACE_USER_EMAIL=your-email@gmail.com
 ```
 
-Notes:
+### 5. Google Maps API
 
-- `GOOGLE_WORKSPACE_USER_EMAIL` must match the Google account you authenticated with in the Workspace MCP browser flow.
-- `GOOGLE_WORKSPACE_TASK_LIST_ID` points to the default Google task list used by the app.
-- `GOOGLE_WORKSPACE_MCP_URL` assumes the Workspace MCP server is started with HTTP transport on port `8000`.
+Enable these APIs in Google Cloud Console and create one API key:
 
-## Google Workspace MCP Server
+- Places API (New)
+- Directions API
 
-ProdigyAI expects a local HTTP MCP server for Google Workspace.
-
-This repo already includes:
-
-- `C:\Users\Pranav Yeturu\Desktop\ProdigyAI\start_google_workspace_mcp.ps1`
-
-That script is intended to start the community Workspace MCP server with Gmail, Calendar, and Tasks enabled.
-
-### Expected credential env for the Workspace MCP server
-
-The Workspace MCP server must know where your downloaded OAuth client JSON file lives.
-
-Example:
-
-```powershell
-$env:GOOGLE_CLIENT_SECRET_PATH="C:\Users\Pranav Yeturu\Desktop\workspace-mcp-config\client_secret.json"
-$env:OAUTHLIB_INSECURE_TRANSPORT="1"
-uvx workspace-mcp --tools gmail calendar tasks --transport streamable-http
+```bash
+gcloud services enable places.googleapis.com directions-backend.googleapis.com
+gcloud services api-keys create --display-name="ProdigyAI Maps"
 ```
 
-### Start the Workspace MCP server
+### 6. Google Workspace MCP Server (Optional)
 
-From the repo root:
+For Calendar, Gmail, Tasks, Drive, and Docs integration:
 
-```powershell
-cd C:\Users\Pranav Yeturu\Desktop\ProdigyAI
-.\start_google_workspace_mcp.ps1
+a. Enable APIs in Google Cloud Console:
+   - Gmail API
+   - Google Calendar API
+   - Google Tasks API
+   - Google Drive API
+   - Google Docs API
+
+b. Create OAuth 2.0 credentials:
+   - Go to APIs and Services, then Credentials
+   - Create OAuth client ID (Desktop app)
+   - Download the client secret JSON
+   - Copy it to `~/.google_workspace_mcp/credentials/client_secret.json`
+
+c. Configure OAuth consent screen:
+   - Set to External, Testing mode
+   - Add your email as a test user
+   - Add scopes for Calendar, Gmail, Tasks, Drive, Docs
+
+d. Start the server:
+
+```bash
+export GOOGLE_OAUTH_CLIENT_ID=your-client-id
+export GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+uvx workspace-mcp --tools gmail calendar tasks drive docs --transport streamable-http --single-user
 ```
 
-Important:
+e. Complete the OAuth flow by visiting the URL shown in the terminal.
 
-- keep this terminal open
-- complete any Google browser auth flow that appears
-- use the same account as `GOOGLE_WORKSPACE_USER_EMAIL`
+### 7. MCP Toolbox
 
-## MCP Toolbox
+Download and start:
 
-Start MCP Toolbox in a second terminal:
-
-```powershell
-cd C:\Users\Pranav Yeturu\Desktop\ProdigyAI
-npx.cmd @toolbox-sdk/server --tools-file tools.yaml --port 5050
+```bash
+# macOS ARM64
+curl -O https://storage.googleapis.com/genai-toolbox/v0.23.0/darwin/arm64/toolbox
+chmod +x toolbox
+./toolbox --tools-file=tools.yaml --port 5050
 ```
 
-Keep this terminal open too.
+For other platforms, see the MCP Toolbox releases page.
 
-## Start ProdigyAI
+### 8. Start ProdigyAI
 
-In a third terminal:
-
-```powershell
-cd C:\Users\Pranav Yeturu\Desktop\ProdigyAI
-.\.venv\Scripts\Activate.ps1
-python -m uvicorn main:app --host 0.0.0.0 --port 8081
+```bash
+python main.py
 ```
 
-Open the app:
+Open http://localhost:8080
 
-```powershell
-start http://127.0.0.1:8081
+---
+
+## Cloud Run Deployment
+
+### Deploy MCP Toolbox + ProdigyAI
+
+```bash
+gcloud run deploy prodigy-ai \
+    --source . \
+    --region=us-central1 \
+    --allow-unauthenticated \
+    --port=8080 \
+    --memory=1Gi \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=your-project,..." \
+    --add-cloudsql-instances=your-connection-name
 ```
 
-## Database Notes
+### Deploy Google Workspace MCP Server
 
-ProdigyAI expects PostgreSQL and uses:
+The Workspace MCP server deploys as a separate Cloud Run service with pre-authenticated OAuth credentials:
 
-- local tables such as `tasks`, `events`, `notes`
-- cache tables such as:
-  - `google_calendar_cache`
-  - `google_tasks_cache`
-  - `gmail_threads_cache`
-
-If the app logs permission errors for `tasks` or `events`, run:
-
-```powershell
-psql -h 127.0.0.1 -U postgres -d prodigyai -c "GRANT USAGE ON SCHEMA public TO apple; GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO apple; GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO apple; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO apple; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO apple;"
+```bash
+cd workspace-mcp-deploy
+gcloud run deploy workspace-mcp \
+    --source . \
+    --region=us-central1 \
+    --allow-unauthenticated \
+    --port=8000
 ```
 
-## Startup Order
+Then set `GOOGLE_WORKSPACE_MCP_URL` on the ProdigyAI service to point to the Workspace MCP service URL.
 
-Always start services in this order:
+---
 
-1. Google Workspace MCP server
-2. MCP Toolbox
-3. ProdigyAI app
+## Demo Workflows
 
-If you change `.env`, restart the ProdigyAI app.
+| Workflow | What Happens | Agents and Tools |
+|---|---|---|
+| "Give me my daily briefing" | Proactive analysis of overdue items, priorities, schedule, and recommendations | Coordinator calls daily_briefing (SQL) |
+| "Prepare for the investor pitch next Thursday" | ParallelAgent runs 3 agents simultaneously: schedule event, create 4 tasks, save research notes | CalendarOps + TaskOps + KnowledgeBase (7 tool calls) |
+| "What if I take Thursday off?" | Time Machine shows visual before/after simulation with rescue plan | Coordinator calls simulate_day_off + smart_reschedule (SQL + Python) |
+| "Find a restaurant near downtown SF" | Real venue search with ratings and addresses | Coordinator calls search_places (Google Maps API) |
+| "Generate my weekly report" | Formatted productivity report with metrics table | Coordinator calls weekly_report + generate_report_summary (SQL + Python) |
 
-If you change Workspace MCP credentials or auth, restart the Workspace MCP server too.
+---
 
-## How To Test
+## Technology Stack
 
-### Google Calendar
+| Component | Technology |
+|---|---|
+| Agent Framework | Google ADK v1.28.0 (LlmAgent, ParallelAgent) |
+| LLM | Gemini 2.5 Flash via Vertex AI |
+| MCP Server (Database) | MCP Toolbox for Databases v0.23.0 |
+| MCP Server (Workspace) | Google Workspace MCP (workspace-mcp) |
+| Database | Cloud SQL PostgreSQL 15 |
+| Maps | Google Maps Places API (New) + Directions API |
+| Web Server | FastAPI + Uvicorn |
+| Frontend | Vanilla HTML/JS/CSS, Chart.js, Marked.js, Web Speech API |
+| Deployment | Cloud Run + Docker |
 
-In the UI:
+---
 
-1. Open `Calendar`
-2. Click `Schedule Meeting`
-3. Create a meeting
-4. Confirm it appears on the calendar page
-5. Confirm it also appears in Google Calendar
+## Team
 
-You can also click `Sync` from the dashboard.
+Built for Gen AI Academy APAC Edition
 
-### Google Tasks
-
-In the UI:
-
-1. Open `Tasks`
-2. Click `Add Google Task`
-3. Create a task with title, optional due date, and notes
-4. Confirm it appears in the Tasks page
-5. Click `Sync`
-6. Mark it complete
-7. Confirm it also updates in Google Tasks
-
-### Gmail
-
-In the UI:
-
-1. Open `Command Center`
-2. Click `Sync`
-3. Check `Inbox Briefing`
-4. Click `Draft reply` on a thread
-5. Confirm a draft appears in Gmail Drafts
-6. Click `Create follow-up task`
-7. Confirm the task appears in Google Tasks
-
-### Chat
-
-Try:
-
-- `Show my Google tasks`
-- `Summarize my inbox`
-- `Schedule a meeting tomorrow at 3 PM`
-- `Create follow-up tasks from my inbox`
-
-If chat fails but Calendar / Tasks / Gmail UI works, the problem is usually Vertex AI auth, not Workspace MCP.
-
-## Troubleshooting
-
-### Google Calendar works but UI is empty
-
-Check:
-
-- Workspace MCP server is running
-- ProdigyAI was restarted after `.env` changes
-- click `Sync`
-- open:
-  - `http://127.0.0.1:8081/api/google/calendar/range?start=2026-04-06&end=2026-04-12`
-
-If that endpoint returns events, backend sync is working and the issue is frontend rendering.
-
-### Google Tasks create works but Tasks page is empty
-
-Check:
-
-- `GOOGLE_WORKSPACE_TASK_LIST_ID` is set in `.env`
-- restart ProdigyAI after changing `.env`
-- click `Sync`
-- open:
-  - `http://127.0.0.1:8081/api/google/tasks`
-
-### Gmail panel is empty
-
-Check:
-
-- click `Sync`
-- open:
-  - `http://127.0.0.1:8081/api/google/gmail/summary`
-
-If that endpoint has threads, the backend is working and the issue is frontend rendering or parser coverage.
-
-### Chat fails with `oauth2.googleapis.com/token` timeout
-
-This is usually Vertex AI auth or network connectivity.
-
-Run:
-
-```powershell
-gcloud auth application-default login
-gcloud auth application-default print-access-token
-```
-
-If that fails, `/api/chat` will fail too.
-
-### Workspace MCP shows auth errors
-
-Use the latest auth link printed by the Workspace MCP terminal.
-
-Do not reuse old OAuth links.
-
-### `uvx` not found
-
-Install `uv`:
-
-```powershell
-winget install --id=astral-sh.uv -e
-```
-
-Then restart PowerShell.
-
-## Useful Commands
-
-Start Workspace MCP:
-
-```powershell
-cd C:\Users\Pranav Yeturu\Desktop\ProdigyAI
-.\start_google_workspace_mcp.ps1
-```
-
-Start Toolbox:
-
-```powershell
-cd C:\Users\Pranav Yeturu\Desktop\ProdigyAI
-npx.cmd @toolbox-sdk/server --tools-file tools.yaml --port 5050
-```
-
-Start app:
-
-```powershell
-cd C:\Users\Pranav Yeturu\Desktop\ProdigyAI
-.\.venv\Scripts\Activate.ps1
-python -m uvicorn main:app --host 0.0.0.0 --port 8081
-```
-
-## Repo Notes
-
-- Seed/demo data has been removed from the setup flow.
-- Google Calendar and Google Tasks are now backed by local cache tables so the UI can render quickly after sync.
-- The app is currently configured around the Google account `pranavyeturu@gmail.com`.
+Monisha Kollipara, Harsha Dayini Akula, Deekshitha Karvan, Pranav Yeturu
