@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from google.adk.tools import FunctionTool
+import dotenv
+dotenv.load_dotenv()
 
 
 WORKSPACE_MCP_URL = os.getenv("GOOGLE_WORKSPACE_MCP_URL", "http://127.0.0.1:8765/mcp")
@@ -94,34 +96,19 @@ def _extract_response_json(resp: Any) -> dict[str, Any]:
     global _SESSION_ID
     if resp.headers.get("Mcp-Session-Id"):
         _SESSION_ID = resp.headers["Mcp-Session-Id"]
-    content_type = resp.headers.get("Content-Type", "")
-    if "text/event-stream" in content_type:
-        data_lines: list[str] = []
-        while True:
-            line = resp.readline().decode("utf-8")
-            if not line:
-                break
-            stripped_line = line.strip()
-            if not stripped_line:
-                if data_lines:
-                    break
-                continue
-            if stripped_line.startswith("data:"):
-                data_lines.append(stripped_line[5:].strip())
-        raw = data_lines[-1] if data_lines else "{}"
-    else:
-        raw = resp.read().decode("utf-8")
-    if not raw.strip():
+    # Always read full body first — more reliable with chunked encoding
+    body = resp.read().decode("utf-8").strip()
+    if not body:
         return {}
-    stripped = raw.lstrip()
-    if "data:" in stripped and any(
-        line.startswith(("data:", "event:", "id:", "retry:"))
-        for line in stripped.splitlines()
-        if line.strip()
-    ):
-        lines = [line[5:].strip() for line in stripped.splitlines() if line.startswith("data:")]
-        raw = lines[-1] if lines else "{}"
-    return json.loads(raw)
+    # Extract JSON from SSE "data:" lines if present
+    if body.startswith("event:") or "\ndata:" in body or body.startswith("data:"):
+        data_lines = [
+            line[5:].strip()
+            for line in body.splitlines()
+            if line.strip().startswith("data:")
+        ]
+        body = data_lines[-1] if data_lines else "{}"
+    return json.loads(body)
 
 
 def _post_rpc(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -153,7 +140,7 @@ def _ensure_initialized() -> None:
     _post_rpc(
         "initialize",
         {
-            "protocolVersion": "2025-06-18",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
             "clientInfo": {"name": "ProdigyAI", "version": "1.0"},
         },

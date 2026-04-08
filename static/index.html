@@ -28,6 +28,44 @@
         <div class="splash-particles" id="splashParticles"></div>
     </div>
 
+    <!-- Welcome / Login Screen -->
+    <div class="welcome-screen" id="welcomeScreen" style="display:none">
+        <div class="welcome-card">
+            <div class="welcome-logo">
+                <div class="orb-core" style="width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#6C5CE7,#A29BFE);display:flex;align-items:center;justify-content:center;color:white;font-size:32px;box-shadow:0 4px 30px rgba(108,92,231,0.4)">
+                    <span class="material-icons-round">psychology</span>
+                </div>
+            </div>
+            <h1 class="welcome-title">Welcome to ProdigyAI</h1>
+            <p class="welcome-subtitle">Your AI Chief of Staff — managing tasks, schedules, and knowledge across your entire Google Workspace</p>
+
+            <div class="welcome-input-group">
+                <label class="welcome-label">Enter your Google email to connect</label>
+                <div class="welcome-input-row">
+                    <span class="material-icons-round welcome-input-icon">email</span>
+                    <input type="email" id="welcomeEmail" class="welcome-input" placeholder="you@gmail.com" />
+                </div>
+                <button class="welcome-btn primary" onclick="connectWithEmail()">
+                    <span class="material-icons-round">login</span> Connect with Google
+                </button>
+            </div>
+
+            <div class="welcome-divider"><span>or</span></div>
+
+            <button class="welcome-btn demo" onclick="connectWithDemo()">
+                <span class="material-icons-round">play_circle</span> Try with Demo Account
+            </button>
+            <p class="welcome-demo-note">Pre-loaded with sample Calendar, Gmail, Tasks, and Drive data</p>
+
+            <div class="welcome-features">
+                <div class="welcome-feature"><span class="material-icons-round">hub</span><span>6 AI Agents</span></div>
+                <div class="welcome-feature"><span class="material-icons-round">storage</span><span>3 MCP Connections</span></div>
+                <div class="welcome-feature"><span class="material-icons-round">work</span><span>8 Google Services</span></div>
+                <div class="welcome-feature"><span class="material-icons-round">mic</span><span>Voice Interface</span></div>
+            </div>
+        </div>
+    </div>
+
     <div class="app" id="app" style="opacity:0">
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">

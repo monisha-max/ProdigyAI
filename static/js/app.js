@@ -91,12 +91,57 @@ function initSplash() {
     }, 280);
     setTimeout(() => {
         document.getElementById('splash').classList.add('hidden');
-        document.getElementById('app').style.opacity = '1';
-        setTimeout(() => {
-            if (window.innerWidth > 768) toggleChat();
-            refreshAll();
-        }, 300);
+        // Show welcome screen instead of going straight to app
+        document.getElementById('welcomeScreen').style.display = 'flex';
     }, 3000);
+}
+
+// ═══ WELCOME SCREEN ═══
+let currentUserEmail = '';
+
+function connectWithEmail() {
+    const email = document.getElementById('welcomeEmail').value.trim();
+    if (!email || !email.includes('@')) {
+        document.getElementById('welcomeEmail').style.borderColor = 'var(--danger)';
+        return;
+    }
+    // For non-demo emails, show a helpful message
+    const DEMO_EMAIL = 'mphd0804@gmail.com';
+    if (email !== DEMO_EMAIL) {
+        // Show info that self-hosted OAuth is needed for personal accounts
+        const btn = document.querySelector('.welcome-btn.primary');
+        btn.innerHTML = '<span class="material-icons-round">info</span> Personal accounts need local OAuth setup';
+        btn.style.background = 'var(--bg-card)';
+        btn.style.color = 'var(--text-secondary)';
+        btn.style.boxShadow = 'none';
+        setTimeout(() => {
+            btn.innerHTML = '<span class="material-icons-round">login</span> Connect with Google';
+            btn.style.background = '';
+            btn.style.color = '';
+            btn.style.boxShadow = '';
+        }, 3000);
+        // Auto-suggest demo
+        document.getElementById('welcomeEmail').value = DEMO_EMAIL;
+        document.getElementById('welcomeEmail').style.borderColor = 'var(--primary)';
+        return;
+    }
+    currentUserEmail = email;
+    launchApp();
+}
+
+function connectWithDemo() {
+    currentUserEmail = 'mphd0804@gmail.com';
+    document.getElementById('welcomeEmail').value = currentUserEmail;
+    launchApp();
+}
+
+function launchApp() {
+    document.getElementById('welcomeScreen').style.display = 'none';
+    document.getElementById('app').style.opacity = '1';
+    setTimeout(() => {
+        if (window.innerWidth > 768) toggleChat();
+        refreshAll();
+    }, 300);
 }
 
 function createParticles() {
