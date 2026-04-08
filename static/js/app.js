@@ -266,6 +266,15 @@ function renderWorkspaceStatus(status) {
     const meta = document.getElementById('googleWorkspaceMeta');
     const copy = document.getElementById('googleWorkspaceCopy');
     if (!pill || !meta || !copy) return;
+
+    // Hide entire workspace section if disabled/disconnected
+    const grid = document.querySelector('.workspace-grid');
+    if (grid && !status.connected) {
+        grid.style.display = 'none';
+        return;
+    }
+    if (grid) grid.style.display = '';
+
     pill.textContent = status.connected ? 'Connected' : 'Disconnected';
     pill.className = `status-pill ${status.connected ? 'status-good' : 'status-warn'}`;
     meta.textContent = status.connected ? 'Workspace MCP connected and cache ready.' : 'Workspace MCP unavailable or not yet configured.';
