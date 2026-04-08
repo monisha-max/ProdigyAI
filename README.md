@@ -266,6 +266,4 @@ Then set `GOOGLE_WORKSPACE_MCP_URL` on the ProdigyAI service to point to the Wor
 
 ## Team
 
-Built for Gen AI Academy APAC Edition
-
 Monisha Kollipara, Harsha Dayini Akula, Deekshitha Karvan, Pranav Yeturu
