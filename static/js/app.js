@@ -216,7 +216,8 @@ async function syncGoogleWorkspace(silent = false) {
 }
 
 async function refreshAll() {
-    await syncGoogleWorkspace(true);
+    // Don't block on sync — just try it in background, load cached data regardless
+    syncGoogleWorkspace(true).catch(() => {});
     const [localTasks, localEvents, googleTasksPayload, googleCalendarPayload, gmailSummary, drivePayload, docsPayload] = await Promise.all([
         fetchData('/api/tasks?status=all'),
         fetchData('/api/events/today'),
@@ -267,13 +268,28 @@ function renderWorkspaceStatus(status) {
     const copy = document.getElementById('googleWorkspaceCopy');
     if (!pill || !meta || !copy) return;
 
-    // Hide entire workspace section if disabled/disconnected
     const grid = document.querySelector('.workspace-grid');
-    if (grid && !status.connected) {
+
+    // Check if any cached Google data exists
+    const hasCachedData = (cachedGoogleTasks && cachedGoogleTasks.length > 0)
+        || (cachedGmailThreads && cachedGmailThreads.length > 0)
+        || (cachedDriveFiles && cachedDriveFiles.length > 0)
+        || (cachedDocsFiles && cachedDocsFiles.length > 0)
+        || (cachedGoogleEvents && cachedGoogleEvents.length > 0);
+
+    if (grid && !status.connected && !hasCachedData) {
         grid.style.display = 'none';
         return;
     }
     if (grid) grid.style.display = '';
+
+    if (!status.connected && hasCachedData) {
+        pill.textContent = 'Synced';
+        pill.className = 'status-pill status-good';
+        meta.textContent = 'Showing synced Google Workspace data.';
+        copy.textContent = `Connected to demo account. Showing ${(cachedGoogleTasks||[]).length} tasks, ${(cachedGmailThreads||[]).length} emails, ${(cachedDriveFiles||[]).length} files.`;
+        return;
+    }
 
     pill.textContent = status.connected ? 'Connected' : 'Disconnected';
     pill.className = `status-pill ${status.connected ? 'status-good' : 'status-warn'}`;
