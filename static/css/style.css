@@ -1472,6 +1472,22 @@ body.chat-open .chat-fab { display: none; }
     font-size: 0.68rem;
     color: var(--text-muted);
 }
+/* Workspace status pill - make it more prominent */
+.workspace-card .status-pill {
+    font-size: 0.68rem;
+    padding: 4px 12px;
+}
+.status-pill.status-warn {
+    background: rgba(225,112,85,0.15);
+    color: var(--danger);
+    border: 1px solid rgba(225,112,85,0.2);
+}
+.status-pill.status-ok {
+    background: rgba(0,184,148,0.15);
+    color: var(--success);
+    border: 1px solid rgba(0,184,148,0.2);
+}
+
 .workspace-empty {
     padding: 18px;
     border: 1px dashed var(--border);
@@ -1504,6 +1520,39 @@ body.chat-open .chat-fab { display: none; }
 /* ─── Google Drive UI ─── */
 .workspace-drive-card { grid-column: 1 / -1; }
 .workspace-docs-card { grid-column: 1 / -1; }
+
+/* ─── Global form input dark theme ─── */
+.workspace-grid input,
+.workspace-grid textarea,
+.workspace-grid select,
+.modal-card input,
+.modal-card textarea,
+.modal-card select {
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-sm) !important;
+    padding: 8px 12px !important;
+    font-family: inherit !important;
+    font-size: 0.82rem !important;
+    color-scheme: dark;
+}
+.workspace-grid input:focus,
+.workspace-grid textarea:focus,
+.modal-card input:focus,
+.modal-card textarea:focus {
+    outline: none !important;
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px var(--primary-glow) !important;
+}
+.workspace-grid input::placeholder,
+.modal-card input::placeholder { color: var(--text-muted) !important; }
+
+/* Workspace "New Event" button */
+.workspace-card .cmd-btn {
+    font-size: 0.75rem;
+    padding: 6px 14px;
+}
 
 .drive-search-bar {
     display: flex;
